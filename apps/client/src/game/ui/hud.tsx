@@ -56,19 +56,21 @@ export const Hud: FC<HudProps> = ({
       </div>
 
       <div className="hud-controls">
-        <div className="bet-control">
-          <button type="button" onClick={() => onAdjustBet(-5)} disabled={!canDecrease || spinning}>
-            -
-          </button>
-          <span>Bet {bet}</span>
-          <button type="button" onClick={() => onAdjustBet(5)} disabled={!canIncrease || spinning}>
-            +
+        <div className="hud-controls-primary">
+          <div className="bet-control">
+            <button type="button" onClick={() => onAdjustBet(-5)} disabled={!canDecrease || spinning}>
+              -
+            </button>
+            <span>Bet {bet}</span>
+            <button type="button" onClick={() => onAdjustBet(5)} disabled={!canIncrease || spinning}>
+              +
+            </button>
+          </div>
+
+          <button type="button" className="spin-button" disabled={spinning} onClick={onSpin}>
+            {spinning ? "Spinning..." : "Spin"}
           </button>
         </div>
-
-        <button type="button" className="spin-button" disabled={spinning} onClick={onSpin}>
-          {spinning ? "Spinning..." : "Spin"}
-        </button>
 
         <button
           type="button"
@@ -85,17 +87,19 @@ export const Hud: FC<HudProps> = ({
           Last Win <strong>{lastWin.toLocaleString()}</strong>
         </p>
 
-        {installAvailable ? (
-          <button type="button" className="install-button" onClick={onInstall}>
-            Install App
-          </button>
-        ) : null}
+        <div className="hud-actions">
+          {installAvailable ? (
+            <button type="button" className="install-button" onClick={onInstall}>
+              Install App
+            </button>
+          ) : null}
 
-        {updateAvailable ? (
-          <button type="button" className="update-button" onClick={onApplyUpdate}>
-            Apply Update
-          </button>
-        ) : null}
+          {updateAvailable ? (
+            <button type="button" className="update-button" onClick={onApplyUpdate}>
+              Apply Update
+            </button>
+          ) : null}
+        </div>
       </div>
     </section>
   );

@@ -38,9 +38,13 @@ Workflow file:
 What it does:
 1. Checks out the repository.
 2. Installs dependencies with `npm ci`.
-3. Builds client app with `VITE_BASE_PATH=/<repo-name>/`.
-4. Adds `.nojekyll` to output.
-5. Uploads `apps/client/dist` and deploys with official Pages actions.
+3. Resolves `VITE_BASE_PATH` dynamically:
+  - project repo pages: `/<repo-name>/`
+  - user/org pages repo (`<owner>.github.io`): `/`
+4. Builds the client app using the resolved base path.
+5. Adds SPA fallback file (`404.html`) by copying `index.html`.
+6. Adds `.nojekyll` to output.
+7. Uploads `apps/client/dist` and deploys with official Pages actions.
 
 Triggers:
 - Push to `main` or `master` when relevant project files change.
@@ -58,8 +62,14 @@ After workflow succeeds:
 
 ### 404 on JS/CSS assets after deploy
 - Symptom: HTML loads but scripts/styles 404.
-- Cause: incorrect base path for project-site hosting.
-- Fix: ensure deploy workflow uses `VITE_BASE_PATH=/<repo-name>/` (already configured in `deploy.yml`).
+- Cause: incorrect base path for the repository type.
+- Fix: ensure deploy workflow resolves base path dynamically:
+  - `/<repo-name>/` for project pages
+  - `/` for user/org pages (`<owner>.github.io`)
+
+### 404 when refreshing non-root route
+- Symptom: opening a deep client route directly returns 404.
+- Fix: deploy artifact includes `404.html` fallback copied from `index.html`.
 
 ### Workflow cannot deploy to Pages
 - Symptom: deploy step fails with permissions errors.

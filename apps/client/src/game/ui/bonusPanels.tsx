@@ -29,6 +29,39 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
   const wheelAscensionLive = activeBonusType === "WHEEL_ASCENSION";
   const relicVaultLive = activeBonusType === "RELIC_VAULT";
 
+  const featureCards = [
+    {
+      key: "ember-respin",
+      kicker: "Reel Triggered Bonus",
+      title: "Ember Respin",
+      live: emberRespinLive,
+      metrics: [
+        ["Locked Cells", emberLock.lockedCells],
+        ["Respins Remaining", emberLock.respinsRemaining]
+      ]
+    },
+    {
+      key: "wheel-ascension",
+      kicker: "Reel Triggered Bonus",
+      title: "Wheel Ascension",
+      live: wheelAscensionLive,
+      metrics: [
+        ["Quest Spins Remaining", freeQuest.spinsRemaining],
+        ["Quest Retriggers", freeQuest.retriggers]
+      ]
+    },
+    {
+      key: "relic-vault",
+      kicker: "Reel Triggered Bonus",
+      title: "Relic Vault",
+      live: relicVaultLive,
+      metrics: [
+        ["Relic Shards", progression.relicShards],
+        ["Forge Meter", progression.forgeMeter]
+      ]
+    }
+  ] as const;
+
   return (
     <aside className="bonus-column">
       <section className="bonus-card jackpot-card">
@@ -47,42 +80,27 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
         </ul>
       </section>
 
-      <section className="bonus-card feature-card">
-        <header>
-          <p className="panel-kicker">Reel Triggered Bonus</p>
-          <h3>Ember Respin</h3>
-        </header>
+      {featureCards.map((card) => (
+        <section key={card.key} className="bonus-card feature-card">
+          <header>
+            <p className="panel-kicker">{card.kicker}</p>
+            <h3>{card.title}</h3>
+          </header>
 
-        <p className={emberRespinLive ? "feature-live" : "feature-idle"}>
-          {activeLabel(emberRespinLive)}
-        </p>
-        <p>Locked Cells: {emberLock.lockedCells}</p>
-        <p>Respins Remaining: {emberLock.respinsRemaining}</p>
-      </section>
+          <p className={`feature-state ${card.live ? "feature-live" : "feature-idle"}`}>
+            {activeLabel(card.live)}
+          </p>
 
-      <section className="bonus-card feature-card">
-        <header>
-          <p className="panel-kicker">Reel Triggered Bonus</p>
-          <h3>Wheel Ascension</h3>
-        </header>
-
-        <p className={wheelAscensionLive ? "feature-live" : "feature-idle"}>
-          {activeLabel(wheelAscensionLive)}
-        </p>
-        <p>Quest Spins Remaining: {freeQuest.spinsRemaining}</p>
-        <p>Quest Retriggers: {freeQuest.retriggers}</p>
-      </section>
-
-      <section className="bonus-card feature-card">
-        <header>
-          <p className="panel-kicker">Reel Triggered Bonus</p>
-          <h3>Relic Vault</h3>
-        </header>
-
-        <p className={relicVaultLive ? "feature-live" : "feature-idle"}>{activeLabel(relicVaultLive)}</p>
-        <p>Relic Shards: {progression.relicShards}</p>
-        <p>Forge Meter: {progression.forgeMeter}</p>
-      </section>
+          <div className="feature-metrics">
+            {card.metrics.map(([label, value]) => (
+              <p key={`${card.key}-${label}`} className="metric-row">
+                <span>{label}</span>
+                <strong>{value.toLocaleString()}</strong>
+              </p>
+            ))}
+          </div>
+        </section>
+      ))}
 
       <section className="bonus-card feature-card">
         <header>
@@ -90,13 +108,29 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
           <h3>Dragon Forge</h3>
         </header>
 
-        <p>Forge Meter: {progression.forgeMeter}</p>
-        <p>Daily Quest Steps: {progression.dailyQuestProgress}</p>
+        <div className="feature-metrics">
+          <p className="metric-row">
+            <span>Forge Meter</span>
+            <strong>{progression.forgeMeter.toLocaleString()}</strong>
+          </p>
+          <p className="metric-row">
+            <span>Daily Quest Steps</span>
+            <strong>{progression.dailyQuestProgress.toLocaleString()}</strong>
+          </p>
+        </div>
       </section>
 
       <section className="bonus-card transport-card">
         <p className="panel-kicker">Transport</p>
-        <p>API Mode: {apiMode === "remote" ? "Server-Authoritative" : "Local Fallback"}</p>
+        <p className="metric-row">
+          <span>API Mode</span>
+          <strong>{apiMode === "remote" ? "Server-Authoritative" : "Local Fallback"}</strong>
+        </p>
+        <p className="transport-note">
+          {apiMode === "remote"
+            ? "Live trigger cadence and events stream from server endpoints."
+            : "Serverless fallback uses weighted local resolver with synced trigger semantics."}
+        </p>
       </section>
     </aside>
   );

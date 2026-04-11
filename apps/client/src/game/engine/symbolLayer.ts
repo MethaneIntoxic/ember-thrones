@@ -34,16 +34,19 @@ export class SymbolLayer {
         }
 
         const marker = new Text(lineGlyph);
+        const markerSize = Math.max(18, Math.min(34, Math.round(Math.min(center.cellWidth, center.cellHeight) * 0.28)));
+        const markerOffsetX = Math.min(center.cellWidth * 0.32, 32);
+        const markerOffsetY = Math.min(center.cellHeight * 0.31, 30);
         marker.style = {
           fontFamily: "Cinzel, Georgia, serif",
-          fontSize: 30,
+          fontSize: markerSize,
           fill: "#ffd978",
-          stroke: { color: "#3e172f", width: 4 },
+          stroke: { color: "#3e172f", width: markerSize <= 22 ? 3 : 4 },
           fontWeight: "700"
         };
 
         marker.anchor.set(0.5);
-        marker.position.set(center.x + 36, center.y - 34);
+        marker.position.set(center.x + markerOffsetX, center.y - markerOffsetY);
 
         this.container.addChild(marker);
         this.markers.push(marker);

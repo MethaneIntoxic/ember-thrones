@@ -53,6 +53,7 @@ export class PixiStage {
     this.root.addChild(this.flashOverlay);
     app.stage.addChild(this.root);
 
+    await this.reelController.warmTextureCache();
     this.resize(width, height);
   }
 

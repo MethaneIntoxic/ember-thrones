@@ -29,7 +29,7 @@ body {
   max-width: 1360px;
   margin: 0 auto;
   display: grid;
-  gap: var(--space-4);
+  gap: clamp(0.8rem, 1.6vw, var(--space-4));
 }
 
 .top-banner {
@@ -78,13 +78,15 @@ body {
 
 .slot-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   gap: var(--space-4);
+  align-items: start;
 }
 
 .main-column {
   display: grid;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .reel-stage {
@@ -155,7 +157,14 @@ body {
 
 .hud-controls {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.hud-controls-primary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-2);
   align-items: center;
 }
@@ -197,6 +206,7 @@ button:disabled {
 
 .spin-button {
   min-height: 44px;
+  width: 100%;
   font-size: 1rem;
   font-weight: 800;
   color: #2b120b;
@@ -205,7 +215,8 @@ button:disabled {
 
 .sync-button {
   min-height: 44px;
-  padding: 0 1rem;
+  min-width: 120px;
+  padding: 0 0.95rem;
   font-weight: 700;
   color: var(--ink-strong);
   background: rgba(77, 214, 216, 0.2);
@@ -220,7 +231,20 @@ button:not(:disabled):hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
   color: var(--ink-soft);
+}
+
+.hud-bottom p {
+  margin: 0;
+}
+
+.hud-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
 }
 
 .install-button {
@@ -254,6 +278,8 @@ button:not(:disabled):hover {
 .bonus-column {
   display: grid;
   gap: var(--space-3);
+  align-content: start;
+  grid-auto-rows: min-content;
 }
 
 .bonus-card {
@@ -262,12 +288,18 @@ button:not(:disabled):hover {
   background: linear-gradient(150deg, rgba(39, 24, 52, 0.92), rgba(18, 13, 30, 0.95));
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 0.6rem;
 }
 
 .bonus-card h3 {
   margin: 0.12rem 0 0.7rem;
   font-family: var(--font-display);
   letter-spacing: 0.03em;
+}
+
+.bonus-card p {
+  margin: 0;
 }
 
 .jackpot-list {
@@ -319,6 +351,35 @@ button:not(:disabled):hover {
 .feature-idle {
   color: var(--ink-muted);
   font-weight: 700;
+}
+
+.feature-state {
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+}
+
+.feature-metrics {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  color: var(--ink-soft);
+}
+
+.metric-row span {
+  color: var(--ink-muted);
+}
+
+.transport-note {
+  color: var(--ink-muted);
+  font-size: 0.83rem;
+  line-height: 1.45;
 }
 
 .bonus-showcase {
@@ -377,7 +438,8 @@ button:not(:disabled):hover {
   position: relative;
   width: min(920px, 100%);
   max-height: min(86vh, 820px);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: calc(var(--radius-lg) + 4px);
   border: 1px solid rgba(255, 206, 125, 0.3);
   box-shadow: 0 22px 52px rgba(0, 0, 0, 0.52);
@@ -416,6 +478,7 @@ button:not(:disabled):hover {
   justify-content: space-between;
   gap: var(--space-2);
   align-items: start;
+  flex-wrap: wrap;
 }
 
 .bonus-overlay-header h2 {
@@ -450,9 +513,9 @@ button:not(:disabled):hover {
 }
 
 .bonus-metrics {
-  display: flex;
-  gap: 0.8rem;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem 0.8rem;
 }
 
 .bonus-metrics p {
@@ -511,8 +574,11 @@ button:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.06);
   color: #ffe3bd;
   padding: 0.45rem 0.55rem;
+  min-height: 42px;
   font-weight: 700;
+  line-height: 1.25;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .wheel-wedges {
@@ -564,6 +630,8 @@ button:not(:disabled):hover {
 .bonus-overlay-footer {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .bonus-close,
@@ -615,7 +683,7 @@ button:not(:disabled):hover {
   }
 
   .bonus-column {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   }
 }
 
@@ -630,6 +698,18 @@ button:not(:disabled):hover {
 
   .hud-controls {
     grid-template-columns: 1fr;
+  }
+
+  .hud-controls-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-button {
+    width: 100%;
+  }
+
+  .hud-actions {
+    justify-content: flex-start;
   }
 
   .bonus-column {

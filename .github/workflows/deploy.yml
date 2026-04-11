@@ -45,10 +45,26 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Resolve Vite Base Path
+        id: basepath
+        shell: bash
+        run: |
+          repo_name="${{ github.event.repository.name }}"
+          owner_name="${{ github.repository_owner }}"
+
+          if [[ "$repo_name" == "$owner_name.github.io" ]]; then
+            echo "vite_base_path=/" >> "$GITHUB_OUTPUT"
+          else
+            echo "vite_base_path=/$repo_name/" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Client For GitHub Pages
         env:
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_BASE_PATH: ${{ steps.basepath.outputs.vite_base_path }}
         run: npm run mobile:pwa:build
+
+      - name: Add SPA 404 Fallback
+        run: cp apps/client/dist/index.html apps/client/dist/404.html
 
       - name: Add .nojekyll
         run: touch apps/client/dist/.nojekyll

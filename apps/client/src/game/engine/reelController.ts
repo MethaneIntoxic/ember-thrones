@@ -1,9 +1,11 @@
-import { Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import { EffectTimeline } from "./effectTimeline";
 
 export interface CellCenter {
   x: number;
   y: number;
+  cellWidth: number;
+  cellHeight: number;
 }
 
 interface SymbolCard {
@@ -23,7 +25,15 @@ interface SymbolPalette {
 }
 
 const DEFAULT_SYMBOL = "DRG";
-const DEFAULT_SYMBOL_SPRITE = "/assets/sprites/symbol-dragon.svg";
+const BASE_URL = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
+function toAssetPath(relativePath: string): string {
+  return `${BASE_URL}${relativePath.replace(/^\/+/, "")}`;
+}
+
+const DEFAULT_SYMBOL_SPRITE = toAssetPath("assets/sprites/symbol-dragon.svg");
 const DEFAULT_SYMBOL_PALETTE: SymbolPalette = {
   card: 0x2a1720,
   border: 0xff9f59,
@@ -41,13 +51,13 @@ const SYMBOL_ALIASES: Record<string, string> = {
 };
 
 const SYMBOL_SPRITES: Record<string, string> = {
-  DRG: "/assets/sprites/symbol-dragon.svg",
-  ORB: "/assets/sprites/symbol-orb.svg",
-  SCT: "/assets/sprites/symbol-scatter.svg",
-  WLD: "/assets/sprites/symbol-wild.svg",
-  CHS: "/assets/sprites/symbol-chest.svg",
-  RNE: "/assets/sprites/symbol-rune.svg",
-  CRN: "/assets/sprites/symbol-crown.svg"
+  DRG: toAssetPath("assets/sprites/symbol-dragon.svg"),
+  ORB: toAssetPath("assets/sprites/symbol-orb.svg"),
+  SCT: toAssetPath("assets/sprites/symbol-scatter.svg"),
+  WLD: toAssetPath("assets/sprites/symbol-wild.svg"),
+  CHS: toAssetPath("assets/sprites/symbol-chest.svg"),
+  RNE: toAssetPath("assets/sprites/symbol-rune.svg"),
+  CRN: toAssetPath("assets/sprites/symbol-crown.svg")
 };
 
 const SYMBOL_PALETTE: Record<string, SymbolPalette> = {
@@ -81,6 +91,8 @@ function paletteFor(symbol: string): SymbolPalette {
 export class ReelController {
   public readonly container = new Container();
 
+  private texturesReady = false;
+
   private readonly columns = 5;
 
   private readonly rows = 3;
@@ -105,11 +117,28 @@ export class ReelController {
     this.buildGrid();
   }
 
+  public async warmTextureCache(): Promise<void> {
+    if (this.texturesReady) {
+      return;
+    }
+
+    try {
+      await Promise.all(Object.values(SYMBOL_SPRITES).map((assetPath) => Assets.load(assetPath)));
+      this.texturesReady = true;
+      this.refreshTextures();
+    } catch (error) {
+      console.warn("[reel] texture warmup failed, using fallback texture.", error);
+      this.texturesReady = false;
+    }
+  }
+
   public getCellCenters(): CellCenter[][] {
     return this.symbolCards.map((column) =>
       column.map((card) => ({
         x: card.root.x,
-        y: card.root.y
+        y: card.root.y,
+        cellWidth: this.cellWidth,
+        cellHeight: this.cellHeight
       }))
     );
   }
@@ -123,8 +152,8 @@ export class ReelController {
     const startX = (stageWidth - this.boardWidth) / 2;
     const startY = (stageHeight - this.boardHeight) / 2;
 
-    const cardWidth = Math.max(72, this.cellWidth * 0.82);
-    const cardHeight = Math.max(84, this.cellHeight * 0.82);
+    const cardWidth = Math.max(48, Math.min(this.cellWidth - 10, this.cellWidth * 0.78));
+    const cardHeight = Math.max(56, Math.min(this.cellHeight - 12, this.cellHeight * 0.78));
 
     this.activeCardWidth = cardWidth;
     this.activeCardHeight = cardHeight;
@@ -193,7 +222,7 @@ export class ReelController {
         const root = new Container();
         const glow = new Graphics();
         const frame = new Graphics();
-        const icon = Sprite.from(spriteFor(symbol));
+        const icon = Sprite.from(Texture.WHITE);
         const label = new Text(symbol);
 
         icon.anchor.set(0.5);
@@ -235,10 +264,30 @@ export class ReelController {
     }
   }
 
+  private refreshTextures(): void {
+    for (let col = 0; col < this.columns; col += 1) {
+      for (let row = 0; row < this.rows; row += 1) {
+        const card = this.symbolCards[col]?.[row];
+        if (!card) {
+          continue;
+        }
+
+        card.icon.texture = Texture.from(spriteFor(card.symbol));
+        card.icon.tint = 0xffffff;
+      }
+    }
+  }
+
   private setCardSymbol(card: SymbolCard, rawSymbol: string): void {
     const symbol = normalizeSymbol(rawSymbol);
     card.symbol = symbol;
-    card.icon.texture = Texture.from(spriteFor(symbol));
+    if (this.texturesReady) {
+      card.icon.texture = Texture.from(spriteFor(symbol));
+      card.icon.tint = 0xffffff;
+    } else {
+      card.icon.texture = Texture.WHITE;
+      card.icon.tint = 0xffffff;
+    }
     card.label.text = symbol;
   }
 
@@ -246,34 +295,44 @@ export class ReelController {
     const palette = paletteFor(card.symbol);
     const width = this.activeCardWidth;
     const height = this.activeCardHeight;
+    const cornerRadius = Math.max(10, Math.round(Math.min(width, height) * 0.16));
 
     card.glow.clear();
     card.glow
-      .roundRect(-width * 0.52, -height * 0.52, width * 1.04, height * 1.04, 20)
+      .roundRect(
+        -width * 0.52,
+        -height * 0.52,
+        width * 1.04,
+        height * 1.04,
+        Math.max(cornerRadius + 3, 12)
+      )
       .fill({ color: palette.glow, alpha: emphasized ? 0.32 : 0.12 });
 
     card.frame.clear();
     card.frame
-      .roundRect(-width / 2, -height / 2, width, height, 16)
+      .roundRect(-width / 2, -height / 2, width, height, cornerRadius)
       .fill({ color: palette.card, alpha: centerRow ? 0.96 : 0.91 });
     card.frame
-      .roundRect(-width / 2, -height / 2, width, height, 16)
+      .roundRect(-width / 2, -height / 2, width, height, cornerRadius)
       .stroke({
         color: emphasized ? 0xffe9b2 : palette.border,
         alpha: emphasized ? 1 : 0.76,
         width: emphasized ? 4 : 2
       });
-    card.frame
-      .roundRect(-width * 0.46, -height * 0.43, width * 0.92, height * 0.86, 13)
-      .stroke({ color: 0xfff2d3, alpha: emphasized ? 0.72 : 0.25, width: 1 });
 
-    const iconSize = Math.max(28, Math.min(width, height) * 0.45);
+    if (width >= 72 && height >= 74) {
+      card.frame
+        .roundRect(-width * 0.46, -height * 0.43, width * 0.92, height * 0.86, Math.max(cornerRadius - 3, 8))
+        .stroke({ color: 0xfff2d3, alpha: emphasized ? 0.72 : 0.25, width: 1 });
+    }
+
+    const iconSize = Math.max(22, Math.min(width * 0.44, height * 0.44));
     card.icon.width = iconSize;
     card.icon.height = iconSize;
-    card.icon.y = -height * 0.1;
+    card.icon.y = -height * 0.11;
     card.icon.alpha = emphasized ? 1 : 0.92;
 
-    card.label.y = height * 0.29;
+    card.label.y = height * 0.31;
     card.label.style = this.createLabelStyle(this.activeLabelSize, palette.ink, emphasized);
   }
 
@@ -283,7 +342,8 @@ export class ReelController {
       fontSize,
       fill,
       stroke: emphasized ? { color: "#2f1128", width: 4 } : { color: "#2f1128", width: 3 },
-      fontWeight: "700"
+      fontWeight: "700",
+      letterSpacing: fontSize <= 12 ? 0.8 : 1.1
     });
   }
 }

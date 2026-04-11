@@ -73,8 +73,5 @@ export * from "./domain/features/emberRespinCollectorLock";
 export * from "./domain/features/freeQuest";
 export * from "./domain/features/celestialWheelAscension";
 export * from "./domain/features/relicVaultPick";
-export * from "./domain/minigames/lanternPick";
-export * from "./domain/minigames/skyPath";
-export * from "./domain/minigames/wyrmDuel";
 export * from "./domain/sim/reportSchema";
 export * from "./domain/sim/simulator";

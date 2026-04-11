@@ -1,4 +1,4 @@
-const CACHE_VERSION = "ember-thrones-v2";
+const CACHE_VERSION = "ember-thrones-v3";
 const SCOPE_URL = new URL(self.registration.scope);
 const BASE_PATH = SCOPE_URL.pathname.endsWith("/")
   ? SCOPE_URL.pathname

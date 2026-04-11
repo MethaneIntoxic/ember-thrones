@@ -85,7 +85,18 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:430
 const runtimeModeEnv = (import.meta.env.VITE_RUNTIME_MODE ?? "").toLowerCase();
 const RUNTIME_MODE: RuntimeMode = runtimeModeEnv === "hybrid" ? "hybrid" : "serverless";
 const DEFAULT_PROFILE_ID = "local-dragon";
-const SYMBOL_POOL = ["DRG", "ORB", "SCT", "CHS", "RNE", "CRN", "WLD"];
+
+const FALLBACK_SYMBOL_WEIGHTS: Array<{ symbol: string; weight: number }> = [
+  { symbol: "DRG", weight: 7 },
+  { symbol: "ORB", weight: 8 },
+  { symbol: "SCT", weight: 6 },
+  { symbol: "WLD", weight: 8 },
+  { symbol: "CHS", weight: 20 },
+  { symbol: "RNE", weight: 20 },
+  { symbol: "CRN", weight: 21 }
+];
+
+const FALLBACK_WEIGHT_TOTAL = FALLBACK_SYMBOL_WEIGHTS.reduce((sum, entry) => sum + entry.weight, 0);
 
 interface ServerProfileEnvelope {
   profile: {
@@ -154,10 +165,6 @@ interface ServerSpinResponse {
   jackpotSnapshotAfter?: Partial<Record<JackpotTier, number>>;
 }
 
-function randomFrom<T>(items: readonly T[]): T {
-  return items[Math.floor(Math.random() * items.length)] as T;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -204,9 +211,22 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+function randomWeightedSymbol(): string {
+  let needle = Math.random() * FALLBACK_WEIGHT_TOTAL;
+
+  for (const entry of FALLBACK_SYMBOL_WEIGHTS) {
+    needle -= entry.weight;
+    if (needle <= 0) {
+      return entry.symbol;
+    }
+  }
+
+  return FALLBACK_SYMBOL_WEIGHTS[FALLBACK_SYMBOL_WEIGHTS.length - 1]?.symbol ?? "DRG";
+}
+
 function createMockReels(): string[][] {
   return Array.from({ length: 5 }, () =>
-    Array.from({ length: 3 }, () => randomFrom(SYMBOL_POOL))
+    Array.from({ length: 3 }, () => randomWeightedSymbol())
   );
 }
 
@@ -544,12 +564,12 @@ export class ApiClient {
     const { winLines, winCoins } = evaluateLineWins(reels);
     const orbCount = reels.flat().filter((symbol) => symbol === "ORB").length;
     const scatterCount = reels.flat().filter((symbol) => symbol === "SCT").length;
-    const chestCount = reels.flat().filter((symbol) => symbol === "CHS").length;
+    const dragonCount = reels.flat().filter((symbol) => symbol === "DRG").length;
+    const wildCount = reels.flat().filter((symbol) => symbol === "WLD").length;
 
     const emberRespin = orbCount >= 6;
-    const wheelAscension = scatterCount >= 4 && reels.flat().includes("DRG");
-    const wildCount = reels.flat().filter((symbol) => symbol === "WLD").length;
-    const relicVault = chestCount >= 4 && wildCount >= 2;
+    const wheelAscension = scatterCount >= 4 && dragonCount >= 1;
+    const relicVault = dragonCount >= 4 && wildCount >= 2;
 
     const triggerSet = new Set<SpinTrigger>();
 
