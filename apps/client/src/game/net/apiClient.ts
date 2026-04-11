@@ -547,8 +547,9 @@ export class ApiClient {
     const chestCount = reels.flat().filter((symbol) => symbol === "CHS").length;
 
     const emberRespin = orbCount >= 6;
-    const wheelAscension = scatterCount >= 3 && reels.flat().includes("DRG");
-    const relicVault = chestCount >= 3 || (chestCount >= 2 && reels.flat().includes("WLD"));
+    const wheelAscension = scatterCount >= 4 && reels.flat().includes("DRG");
+    const wildCount = reels.flat().filter((symbol) => symbol === "WLD").length;
+    const relicVault = chestCount >= 4 && wildCount >= 2;
 
     const triggerSet = new Set<SpinTrigger>();
 
@@ -569,7 +570,7 @@ export class ApiClient {
       triggerSet.add("BONUS");
     }
 
-    if (scatterCount >= 4) {
+    if (scatterCount >= 3) {
       triggerSet.add("FREE_QUEST");
     }
 

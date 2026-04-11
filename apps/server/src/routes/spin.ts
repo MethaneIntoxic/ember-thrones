@@ -235,8 +235,8 @@ const analyzeReels = (reels: SymbolCode[][]): ReelAnalysis => {
 const deriveTriggerFlags = (analysis: ReelAnalysis): TriggerFlags => {
   return {
     emberRespin: analysis.orbCount >= 6,
-    wheelAscension: analysis.scatterCount >= 3 && analysis.dragonCount >= 1,
-    relicVaultPick: analysis.dragonCount >= 3 || (analysis.dragonCount >= 2 && analysis.wildCount >= 1),
+    wheelAscension: analysis.scatterCount >= 4 && analysis.dragonCount >= 1,
+    relicVaultPick: analysis.dragonCount >= 4 && analysis.wildCount >= 2,
     freeQuest: analysis.scatterCount >= 3,
   };
 };

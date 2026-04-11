@@ -165,10 +165,10 @@ test("spin emits triggerFlags/bonusPayload and preserves legacy trigger compatib
     const wildCount = flat.filter((symbol) => symbol === "WILD").length;
 
     assert.equal(payload.triggerFlags.emberRespin, orbCount >= 6);
-    assert.equal(payload.triggerFlags.wheelAscension, scatterCount >= 3 && dragonCount >= 1);
+    assert.equal(payload.triggerFlags.wheelAscension, scatterCount >= 4 && dragonCount >= 1);
     assert.equal(
       payload.triggerFlags.relicVaultPick,
-      dragonCount >= 3 || (dragonCount >= 2 && wildCount >= 1),
+      dragonCount >= 4 && wildCount >= 2,
     );
     assert.equal(payload.triggerFlags.freeQuest, scatterCount >= 3);
 
