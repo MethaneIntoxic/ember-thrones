@@ -1,0 +1,53 @@
+# Ember Thrones File Structure
+
+```text
+apps/
+  client/
+    public/
+      manifest.webmanifest
+      sw.js
+      assets/
+        audio/
+        sprites/
+    src/
+      app/
+      game/
+        audio/
+        engine/
+        net/
+        platform/
+        state/
+        ui/
+          miniGames/
+      styles/
+    tests/
+      unit/
+      e2e/
+  server/
+    src/
+      lib/
+      routes/
+      seeds/
+    tests/
+packages/
+  shared/
+    src/
+      contracts/
+      domain/
+        features/
+        minigames/
+        sim/
+    tests/
+tools/
+  sim/
+    run-sim.ts
+docs/
+  implementation-todos.md
+  file-structure.md
+  game-design.md
+  math-model.md
+  ux-flow.md
+  liveops-local.md
+  security-local.md
+  release-checklist.md
+```
