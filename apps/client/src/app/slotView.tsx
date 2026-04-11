@@ -2,25 +2,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { audioBus } from "../game/audio/audioBus";
 import { installAudioUnlock } from "../game/audio/unlockAudio";
 import { PixiStage } from "../game/engine/pixiStage";
+import type { BonusType } from "../game/net/apiClient";
 import { EventClient } from "../game/net/eventClient";
 import { budgetForTier, inferPerfTier, PerfBudgetMonitor } from "../game/platform/perfBudget";
-import { useGameStore, type MiniGameType } from "../game/state/store";
+import { useGameStore } from "../game/state/store";
 import { BonusPanels } from "../game/ui/bonusPanels";
+import { BonusPresentationOverlay } from "../game/ui/bonusPresentation";
 import { Hud } from "../game/ui/hud";
-import { LanternPick } from "../game/ui/miniGames/lanternPick";
-import { SkyPath } from "../game/ui/miniGames/skyPath";
-import { WyrmDuel } from "../game/ui/miniGames/wyrmDuel";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
-const MINI_GAME_TABS: Array<{ key: MiniGameType; label: string }> = [
-  { key: "lantern-pick", label: "Lantern Pick" },
-  { key: "sky-path", label: "Sky Path" },
-  { key: "wyrm-duel", label: "Wyrm Duel" }
-];
+function formatBonusType(type: BonusType): string {
+  if (type === "EMBER_RESPIN") {
+    return "Ember Respin";
+  }
+
+  if (type === "WHEEL_ASCENSION") {
+    return "Wheel Ascension";
+  }
+
+  return "Relic Vault";
+}
 
 export function SlotView(): JSX.Element {
   const profile = useGameStore((state) => state.profile);
@@ -39,20 +44,21 @@ export function SlotView(): JSX.Element {
   const freeQuest = useGameStore((state) => state.freeQuest);
   const progression = useGameStore((state) => state.progression);
   const apiMode = useGameStore((state) => state.apiMode);
-  const activeMiniGame = useGameStore((state) => state.activeMiniGame);
+  const activeBonus = useGameStore((state) => state.activeBonus);
+  const bonusSessions = useGameStore((state) => state.bonusSessions);
 
   const bootstrap = useGameStore((state) => state.bootstrap);
   const spin = useGameStore((state) => state.spin);
   const syncOfflineQueue = useGameStore((state) => state.syncOfflineQueue);
   const adjustBet = useGameStore((state) => state.adjustBet);
   const setOnlineStatus = useGameStore((state) => state.setOnlineStatus);
-  const setMiniGame = useGameStore((state) => state.setMiniGame);
-  const awardMiniGameReward = useGameStore((state) => state.awardMiniGameReward);
+  const dismissBonus = useGameStore((state) => state.dismissBonus);
   const consumeServerEvent = useGameStore((state) => state.consumeServerEvent);
 
   const stageHostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<PixiStage | null>(null);
   const previousSpinsRef = useRef(0);
+  const previousBonusSessionRef = useRef<string | null>(null);
 
   const [perfLabel, setPerfLabel] = useState("Performance: sampling...");
   const [deferredInstallPrompt, setDeferredInstallPrompt] =
@@ -220,15 +226,36 @@ export function SlotView(): JSX.Element {
     }
   }, [wallet.lifetimeSpins, lastWin, emberLock.active, freeQuest.active]);
 
+  useEffect(() => {
+    if (activeBonus) {
+      audioBus.setTensionState("bonus");
+      return;
+    }
+
+    audioBus.setTensionState(spinning ? "spin" : "idle");
+  }, [spinning, activeBonus]);
+
+  useEffect(() => {
+    if (!activeBonus) {
+      previousBonusSessionRef.current = null;
+      return;
+    }
+
+    if (previousBonusSessionRef.current === activeBonus.sessionId) {
+      return;
+    }
+
+    previousBonusSessionRef.current = activeBonus.sessionId;
+    audioBus.playBonusEntry(activeBonus.type);
+
+    if (stageRef.current) {
+      void stageRef.current.playBonusEntry(activeBonus.type);
+    }
+  }, [activeBonus]);
+
   const onSpin = async (): Promise<void> => {
     audioBus.playSpin();
     await spin();
-  };
-
-  const onMiniGameReward = (coins: number): void => {
-    const gemReward = Math.floor(coins / 120);
-    awardMiniGameReward(coins, gemReward);
-    audioBus.playFeature("mini-game");
   };
 
   const onInstall = async (): Promise<void> => {
@@ -263,7 +290,7 @@ export function SlotView(): JSX.Element {
           <p className="panel-kicker">Original Dragon-Fantasy Vertical Slice</p>
           <h1>Ember Thrones</h1>
           <p>
-            Hold-and-respin tension with jackpot ladder drama and side mini-games.
+            Reel-triggered bonus volatility with deterministic reveal sessions and jackpot tension.
             {profile ? ` Welcome back, ${profile.nickname}.` : ""}
           </p>
         </div>
@@ -311,27 +338,23 @@ export function SlotView(): JSX.Element {
           freeQuest={freeQuest}
           progression={progression}
           apiMode={apiMode}
+          activeBonusType={activeBonus?.type ?? null}
         />
       </section>
 
-      <section className="mini-section">
-        <div className="mini-switch">
-          {MINI_GAME_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={tab.key === activeMiniGame ? "is-active" : ""}
-              onClick={() => setMiniGame(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {activeMiniGame === "lantern-pick" ? <LanternPick onReward={onMiniGameReward} /> : null}
-        {activeMiniGame === "sky-path" ? <SkyPath onReward={onMiniGameReward} /> : null}
-        {activeMiniGame === "wyrm-duel" ? <WyrmDuel onReward={onMiniGameReward} /> : null}
+      <section className="bonus-showcase">
+        <p className={`bonus-tracker ${activeBonus ? "" : "is-idle"}`}>
+          {activeBonus
+            ? `Active Bonus: ${formatBonusType(activeBonus.type)} · Seed ${activeBonus.revealSeed.slice(0, 8)} · Source ${activeBonus.source === "event" ? "Server Event" : "Spin Payload"}`
+            : "No bonus active. Trigger Ember Respin, Wheel Ascension, or Relic Vault from the reels."}
+        </p>
+        <p className="bonus-session-count">Tracked Bonus Sessions: {bonusSessions.length}</p>
       </section>
+
+      <BonusPresentationOverlay
+        bonus={activeBonus}
+        onClose={dismissBonus}
+      />
     </article>
   );
 }

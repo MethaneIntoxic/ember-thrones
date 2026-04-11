@@ -1,5 +1,5 @@
 import type { FC } from "react";
-import type { EmberLockStatus, FreeQuestStatus, JackpotTier } from "../net/apiClient";
+import type { BonusType, EmberLockStatus, FreeQuestStatus, JackpotTier } from "../net/apiClient";
 import type { ProgressionState } from "../state/store";
 
 export interface BonusPanelsProps {
@@ -8,17 +8,27 @@ export interface BonusPanelsProps {
   freeQuest: FreeQuestStatus;
   progression: ProgressionState;
   apiMode: "remote" | "fallback";
+  activeBonusType: BonusType | null;
 }
 
 const JACKPOT_ORDER: JackpotTier[] = ["ember", "relic", "mythic", "throne"];
+
+function activeLabel(isActive: boolean): string {
+  return isActive ? "Live" : "Idle";
+}
 
 export const BonusPanels: FC<BonusPanelsProps> = ({
   jackpotLadder,
   emberLock,
   freeQuest,
   progression,
-  apiMode
+  apiMode,
+  activeBonusType
 }) => {
+  const emberRespinLive = activeBonusType === "EMBER_RESPIN" || emberLock.active;
+  const wheelAscensionLive = activeBonusType === "WHEEL_ASCENSION";
+  const relicVaultLive = activeBonusType === "RELIC_VAULT";
+
   return (
     <aside className="bonus-column">
       <section className="bonus-card jackpot-card">
@@ -39,12 +49,12 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
 
       <section className="bonus-card feature-card">
         <header>
-          <p className="panel-kicker">Feature Status</p>
-          <h3>Ember Lock</h3>
+          <p className="panel-kicker">Reel Triggered Bonus</p>
+          <h3>Ember Respin</h3>
         </header>
 
-        <p className={emberLock.active ? "feature-live" : "feature-idle"}>
-          {emberLock.active ? "Active" : "Idle"}
+        <p className={emberRespinLive ? "feature-live" : "feature-idle"}>
+          {activeLabel(emberRespinLive)}
         </p>
         <p>Locked Cells: {emberLock.lockedCells}</p>
         <p>Respins Remaining: {emberLock.respinsRemaining}</p>
@@ -52,15 +62,26 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
 
       <section className="bonus-card feature-card">
         <header>
-          <p className="panel-kicker">Feature Status</p>
-          <h3>Free Quest</h3>
+          <p className="panel-kicker">Reel Triggered Bonus</p>
+          <h3>Wheel Ascension</h3>
         </header>
 
-        <p className={freeQuest.active ? "feature-live" : "feature-idle"}>
-          {freeQuest.active ? "Active" : "Idle"}
+        <p className={wheelAscensionLive ? "feature-live" : "feature-idle"}>
+          {activeLabel(wheelAscensionLive)}
         </p>
-        <p>Spins Remaining: {freeQuest.spinsRemaining}</p>
-        <p>Retriggers: {freeQuest.retriggers}</p>
+        <p>Quest Spins Remaining: {freeQuest.spinsRemaining}</p>
+        <p>Quest Retriggers: {freeQuest.retriggers}</p>
+      </section>
+
+      <section className="bonus-card feature-card">
+        <header>
+          <p className="panel-kicker">Reel Triggered Bonus</p>
+          <h3>Relic Vault</h3>
+        </header>
+
+        <p className={relicVaultLive ? "feature-live" : "feature-idle"}>{activeLabel(relicVaultLive)}</p>
+        <p>Relic Shards: {progression.relicShards}</p>
+        <p>Forge Meter: {progression.forgeMeter}</p>
       </section>
 
       <section className="bonus-card feature-card">
@@ -70,7 +91,6 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
         </header>
 
         <p>Forge Meter: {progression.forgeMeter}</p>
-        <p>Relic Shards: {progression.relicShards}</p>
         <p>Daily Quest Steps: {progression.dailyQuestProgress}</p>
       </section>
 

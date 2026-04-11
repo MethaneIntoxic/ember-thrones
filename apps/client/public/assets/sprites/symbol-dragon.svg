@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Dragon symbol">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a1e18"/>
+      <stop offset="1" stop-color="#7a2f1e"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffdca6"/>
+      <stop offset="1" stop-color="#ff9f4d"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="url(#bg)" stroke="#ffd29a" stroke-width="4"/>
+  <path d="M32 88 C36 54 58 30 92 30 C76 42 70 56 72 68 C68 62 62 58 52 60 C58 70 58 80 46 92 Z" fill="url(#metal)"/>
+  <circle cx="80" cy="48" r="4" fill="#2b120b"/>
+</svg>

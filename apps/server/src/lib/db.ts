@@ -81,6 +81,7 @@ export interface AtomicSpinCommitInput {
   sessionState: Record<string, unknown>;
   jackpotContributionBet: number;
   jackpotPayoutTier?: JackpotTier;
+  jackpotPayoutTiers?: JackpotTier[];
 }
 
 export interface SessionUpsertInput {
@@ -408,10 +409,21 @@ export class ServerDb {
       this.bumpJackpot("mythic", mythic, now);
       this.bumpJackpot("throne", throne, now);
 
+      const payoutTiers = new Set<JackpotTier>();
       if (input.jackpotPayoutTier) {
+        payoutTiers.add(input.jackpotPayoutTier);
+      }
+
+      if (Array.isArray(input.jackpotPayoutTiers)) {
+        for (const tier of input.jackpotPayoutTiers) {
+          payoutTiers.add(tier);
+        }
+      }
+
+      for (const tier of payoutTiers) {
         this.db
           .prepare("UPDATE jackpots SET amount = ?, updated_at = ? WHERE tier = ?")
-          .run(BASE_JACKPOTS[input.jackpotPayoutTier], now, input.jackpotPayoutTier);
+          .run(BASE_JACKPOTS[tier], now, tier);
       }
 
       const nextCoins = Math.max(0, profile.coins + (input.walletDelta.coinsDelta ?? 0));

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Glow burst">
+  <defs>
+    <radialGradient id="burst" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff2bd" stop-opacity="1"/>
+      <stop offset="0.45" stop-color="#ffb463" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#ff8a55" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#burst)"/>
+</svg>

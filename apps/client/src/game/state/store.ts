@@ -2,6 +2,8 @@ import { create } from "zustand";
 import {
   apiClient,
   createSpinRequest,
+  type BonusPayload,
+  type BonusType,
   type ConfigResponse,
   type EmberLockStatus,
   type FreeQuestStatus,
@@ -17,9 +19,22 @@ import {
   loadOfflineSpinQueue
 } from "../platform/offlineSync";
 
-export type MiniGameType = "none" | "lantern-pick" | "sky-path" | "wyrm-duel";
-
 type JackpotLadder = Record<JackpotTier, number>;
+type BonusSource = "spin" | "event";
+
+const MAX_BONUS_SESSIONS = 18;
+
+export interface ActiveBonusPresentation {
+  type: BonusType;
+  sessionId: string;
+  revealSeed: string;
+  expectedTotalAward: number;
+  jackpotAwards: BonusPayload["jackpotAwards"];
+  precomputedOutcome: Record<string, unknown>;
+  triggerSpinId: string;
+  openedAt: number;
+  source: BonusSource;
+}
 
 export interface ProgressionState {
   forgeMeter: number;
@@ -28,11 +43,11 @@ export interface ProgressionState {
 }
 
 const DEFAULT_REELS: string[][] = [
-  ["DRG", "ORB", "QST"],
-  ["BLD", "RNG", "JWL"],
+  ["DRG", "ORB", "SCT"],
+  ["CHS", "RNE", "CRN"],
   ["DRG", "WLD", "ORB"],
-  ["QST", "BLD", "RNG"],
-  ["JWL", "DRG", "ORB"]
+  ["SCT", "CHS", "RNE"],
+  ["CRN", "DRG", "ORB"]
 ];
 
 const DEFAULT_WALLET: WalletState = {
@@ -79,10 +94,116 @@ function randomSessionId(): string {
   return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function pickMiniGame(spinId: string): MiniGameType {
-  const games: MiniGameType[] = ["lantern-pick", "sky-path", "wyrm-duel"];
-  const hash = spinId.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return games[hash % games.length] ?? "lantern-pick";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeBonusType(value: unknown): BonusType | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "EMBER_RESPIN") {
+    return "EMBER_RESPIN";
+  }
+
+  if (normalized === "WHEEL_ASCENSION") {
+    return "WHEEL_ASCENSION";
+  }
+
+  if (normalized === "RELIC_VAULT" || normalized === "RELIC_VAULT_PICK") {
+    return "RELIC_VAULT";
+  }
+
+  return null;
+}
+
+function toInt(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.floor(parsed));
+}
+
+function toBonusPresentation(
+  spinId: string,
+  payload: BonusPayload,
+  source: BonusSource
+): ActiveBonusPresentation {
+  return {
+    type: payload.type,
+    sessionId: payload.sessionId,
+    revealSeed: payload.revealSeed,
+    expectedTotalAward: payload.expectedTotalAward,
+    jackpotAwards: payload.jackpotAwards,
+    precomputedOutcome: payload.precomputedOutcome,
+    triggerSpinId: spinId,
+    openedAt: Date.now(),
+    source
+  };
+}
+
+function upsertBonusSession(
+  sessions: ActiveBonusPresentation[],
+  nextSession: ActiveBonusPresentation
+): ActiveBonusPresentation[] {
+  const deduped = sessions.filter((session) => session.sessionId !== nextSession.sessionId);
+  return [nextSession, ...deduped].slice(0, MAX_BONUS_SESSIONS);
+}
+
+function normalizeEventBonusPayload(rawPayload: unknown): BonusPayload | null {
+  const envelope = isRecord(rawPayload)
+    ? isRecord(rawPayload.bonusPayload)
+      ? rawPayload.bonusPayload
+      : rawPayload
+    : null;
+
+  if (!envelope) {
+    return null;
+  }
+
+  const type = normalizeBonusType(envelope.type);
+  if (!type) {
+    return null;
+  }
+
+  const rawJackpotAwards = Array.isArray(envelope.jackpotAwards) ? envelope.jackpotAwards : [];
+  const jackpotAwards = rawJackpotAwards
+    .map((award) => {
+      if (!isRecord(award)) {
+        return null;
+      }
+
+      const tier = award.tier;
+      if (tier !== "ember" && tier !== "relic" && tier !== "mythic" && tier !== "throne") {
+        return null;
+      }
+
+      return {
+        tier,
+        amount: toInt(award.amount),
+        source: typeof award.source === "string" ? award.source : "event"
+      };
+    })
+    .filter((award): award is BonusPayload["jackpotAwards"][number] => award !== null);
+
+  return {
+    type,
+    sessionId:
+      typeof envelope.sessionId === "string" && envelope.sessionId.length > 0
+        ? envelope.sessionId
+        : `event-${Date.now().toString(36)}`,
+    revealSeed:
+      typeof envelope.revealSeed === "string" && envelope.revealSeed.length > 0
+        ? envelope.revealSeed
+        : `seed-${Math.random().toString(36).slice(2, 10)}`,
+    precomputedOutcome: isRecord(envelope.precomputedOutcome) ? envelope.precomputedOutcome : {},
+    expectedTotalAward: toInt(envelope.expectedTotalAward),
+    jackpotAwards
+  };
 }
 
 function applySpinToState(
@@ -91,21 +212,34 @@ function applySpinToState(
   get: () => GameStore
 ): void {
   const current = get();
-  const nextMiniGame = result.triggers.includes("MINI_GAME")
-    ? pickMiniGame(result.spinId)
-    : current.activeMiniGame;
+
+  const emberTriggered =
+    result.triggers.includes("EMBER_RESPIN") || result.triggers.includes("EMBER_LOCK");
+  const freeQuestTriggered = result.triggers.includes("FREE_QUEST");
+  const relicTriggered = result.triggers.includes("RELIC_VAULT");
+  const anyBonusTriggered = result.triggers.includes("BONUS") || result.bonusPayload !== null;
 
   const forgeGain =
     1 +
     Math.floor(result.winCoins / 75) +
-    (result.triggers.includes("EMBER_LOCK") ? 3 : 0) +
-    (result.triggers.includes("FREE_QUEST") ? 2 : 0);
+    (emberTriggered ? 3 : 0) +
+    (freeQuestTriggered ? 2 : 0) +
+    (anyBonusTriggered ? 2 : 0);
+
+  const relicShardGain = relicTriggered ? 2 : 0;
 
   const nextProgression: ProgressionState = {
     forgeMeter: current.progression.forgeMeter + forgeGain,
-    relicShards: current.progression.relicShards,
+    relicShards: current.progression.relicShards + relicShardGain,
     dailyQuestProgress: current.progression.dailyQuestProgress + 1
   };
+
+  const nextBonus = result.bonusPayload
+    ? toBonusPresentation(result.spinId, result.bonusPayload, "spin")
+    : null;
+  const nextSessions = nextBonus
+    ? upsertBonusSession(current.bonusSessions, nextBonus)
+    : current.bonusSessions;
 
   set({
     reels: result.reels,
@@ -115,7 +249,8 @@ function applySpinToState(
     jackpotLadder: result.jackpotLadder,
     emberLock: result.emberLock,
     freeQuest: result.freeQuest,
-    activeMiniGame: nextMiniGame,
+    activeBonus: nextBonus,
+    bonusSessions: nextSessions,
     progression: nextProgression,
     apiMode: apiClient.mode,
     error: undefined
@@ -139,7 +274,8 @@ export interface GameStore {
   online: boolean;
   queuedSpins: number;
   apiMode: "remote" | "fallback";
-  activeMiniGame: MiniGameType;
+  activeBonus: ActiveBonusPresentation | null;
+  bonusSessions: ActiveBonusPresentation[];
   error?: string;
   bootstrap: () => Promise<void>;
   spin: () => Promise<void>;
@@ -147,8 +283,7 @@ export interface GameStore {
   setOnlineStatus: (online: boolean) => void;
   setBet: (value: number) => void;
   adjustBet: (delta: number) => void;
-  setMiniGame: (value: MiniGameType) => void;
-  awardMiniGameReward: (coins: number, gems?: number) => void;
+  dismissBonus: () => void;
   consumeServerEvent: (event: ServerEvent) => void;
 }
 
@@ -169,7 +304,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   online: getOnlineStatus(),
   queuedSpins: loadOfflineSpinQueue().length,
   apiMode: apiClient.mode,
-  activeMiniGame: "lantern-pick",
+  activeBonus: null,
+  bonusSessions: [],
   error: undefined,
 
   bootstrap: async () => {
@@ -271,28 +407,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     get().setBet(nextBet);
   },
 
-  setMiniGame: (value) => {
-    set({ activeMiniGame: value });
-  },
-
-  awardMiniGameReward: (coins, gems = 0) => {
-    const wallet = get().wallet;
-    const progression = get().progression;
-    const forgeBonus = Math.max(1, Math.floor(coins / 60));
-    const shardBonus = Math.max(1, Math.floor(coins / 150));
-    set({
-      wallet: {
-        ...wallet,
-        coins: wallet.coins + coins,
-        gems: wallet.gems + gems,
-        lifetimeWins: wallet.lifetimeWins + Math.max(0, coins)
-      },
-      progression: {
-        forgeMeter: progression.forgeMeter + forgeBonus,
-        relicShards: progression.relicShards + shardBonus,
-        dailyQuestProgress: progression.dailyQuestProgress + 1
-      }
-    });
+  dismissBonus: () => {
+    set({ activeBonus: null });
   },
 
   consumeServerEvent: (event) => {
@@ -321,6 +437,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ...progression,
           relicShards: progression.relicShards + 1
         }
+      });
+    }
+
+    if (event.type === "bonus") {
+      const payload = normalizeEventBonusPayload(event.payload);
+      if (!payload) {
+        return;
+      }
+
+      const presentation = toBonusPresentation(`event-${event.ts}`, payload, "event");
+
+      set({
+        activeBonus: presentation,
+        bonusSessions: upsertBonusSession(get().bonusSessions, presentation)
       });
     }
   }

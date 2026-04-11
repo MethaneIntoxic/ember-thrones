@@ -9,6 +9,26 @@ export {
 	orbLandingSchema as contractOrbLandingSchema,
 	emberLockStateSchema,
 	freeQuestStateSchema,
+	bonusTypeCanonicalSchema,
+	bonusTypeShortSchema,
+	bonusTypeInputSchema,
+	normalizedBonusTypeSchema,
+	bonusTypeSchema,
+	bonusJackpotAwardSchema,
+	emberRespinJackpotOrbHitSchema,
+	emberRespinCollectorLockSessionSchema,
+	wheelWedgeKindSchema,
+	wheelWedgeSchema,
+	wheelOutcomeBySpinSchema,
+	celestialWheelAscensionSessionSchema,
+	relicVaultHiddenSchema,
+	relicVaultBoardSlotSchema,
+	relicVaultPickSessionSchema,
+	bonusSessionSchema,
+	bonusPayloadSchema,
+	normalizeBonusType,
+	toShortBonusType,
+	collectBonusSessionJackpotTiers,
 	spinRequestSchema,
 	spinResultSchema,
 	simulationRequestSchema
@@ -24,6 +44,21 @@ export type {
 	OrbLanding as ContractOrbLanding,
 	EmberLockStateContract,
 	FreeQuestStateContract,
+	BonusTypeInput,
+	BonusTypeShort,
+	BonusType,
+	BonusJackpotAward,
+	EmberRespinJackpotOrbHit,
+	EmberRespinCollectorLockSession,
+	WheelWedgeKind,
+	WheelWedge,
+	WheelOutcomeBySpin,
+	CelestialWheelAscensionSession,
+	RelicVaultHidden,
+	RelicVaultBoardSlot,
+	RelicVaultPickSession,
+	BonusSession,
+	BonusPayload,
 	SpinRequest,
 	SpinResult,
 	SimulationRequest
@@ -34,7 +69,10 @@ export * from "./domain/rng";
 export * from "./domain/reels";
 export * from "./domain/payout";
 export * from "./domain/features/emberLock";
+export * from "./domain/features/emberRespinCollectorLock";
 export * from "./domain/features/freeQuest";
+export * from "./domain/features/celestialWheelAscension";
+export * from "./domain/features/relicVaultPick";
 export * from "./domain/minigames/lanternPick";
 export * from "./domain/minigames/skyPath";
 export * from "./domain/minigames/wyrmDuel";

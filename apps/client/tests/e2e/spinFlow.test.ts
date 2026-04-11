@@ -26,6 +26,133 @@ function jsonResponse(payload: unknown, status = 200): FetchJsonResponse {
 }
 
 function mockFetchForOnlineFlow(): void {
+  let spinCall = 0;
+  const spinResponses = [
+    {
+      spinId: "spin-1",
+      reels: [
+        ["SCT", "DRG", "ORB"],
+        ["SCT", "DRG", "CHS"],
+        ["SCT", "DRG", "RNE"],
+        ["DRG", "ORB", "CRN"],
+        ["WLD", "CHS", "ORB"]
+      ],
+      wins: [{ kind: "line", amount: 140, detail: "Row 2 DRAGON x5" }],
+      triggers: {
+        emberLock: false,
+        freeQuest: false
+      },
+      triggerFlags: {
+        emberRespin: false,
+        wheelAscension: true,
+        relicVaultPick: false,
+        freeQuest: false
+      },
+      bonusPayload: {
+        type: "WHEEL_ASCENSION",
+        sessionId: "bonus-wheel-1",
+        revealSeed: "seed-wheel-1",
+        expectedTotalAward: 260,
+        precomputedOutcome: {
+          awardedSpins: 3,
+          maxSpins: 5,
+          wedgeMap: [
+            { wedgeId: "coin-1", kind: "coin", value: 90 },
+            { wedgeId: "mult-2", kind: "multiplier", value: 2 }
+          ],
+          outcomesBySpin: [{ wedgeId: "coin-1", resolvedAward: 140 }]
+        },
+        jackpotAwards: []
+      },
+      bonusState: {},
+      totalWin: 140,
+      updatedWallet: {
+        coins: 5115,
+        gems: 20,
+        lifetimeSpins: 1,
+        lifetimeWins: 140
+      },
+      jackpotLadder: {
+        ember: 1210,
+        relic: 3810,
+        mythic: 9510,
+        throne: 28010
+      }
+    },
+    {
+      spinId: "spin-2",
+      reels: [
+        ["CHS", "DRG", "ORB"],
+        ["CHS", "RNE", "SCT"],
+        ["CHS", "CRN", "ORB"],
+        ["WLD", "DRG", "RNE"],
+        ["ORB", "CHS", "DRG"]
+      ],
+      wins: [{ kind: "line", amount: 80, detail: "Row 1 CHEST x3" }],
+      triggers: {
+        emberLock: false,
+        freeQuest: false
+      },
+      triggerFlags: {
+        emberRespin: false,
+        wheelAscension: false,
+        relicVaultPick: true,
+        freeQuest: false
+      },
+      bonusPayload: null,
+      bonusState: {},
+      totalWin: 80,
+      updatedWallet: {
+        coins: 5170,
+        gems: 20,
+        lifetimeSpins: 2,
+        lifetimeWins: 220
+      },
+      jackpotLadder: {
+        ember: 1215,
+        relic: 3818,
+        mythic: 9518,
+        throne: 28018
+      }
+    },
+    {
+      spinId: "spin-3",
+      reels: [
+        ["DRG", "ORB", "SCT"],
+        ["RNE", "CRN", "CHS"],
+        ["ORB", "RNE", "WLD"],
+        ["CRN", "CHS", "DRG"],
+        ["RNE", "ORB", "CHS"]
+      ],
+      wins: [],
+      triggers: {
+        emberLock: false,
+        freeQuest: false
+      },
+      triggerFlags: {
+        emberRespin: false,
+        wheelAscension: false,
+        relicVaultPick: false,
+        freeQuest: false
+      },
+      bonusPayload: null,
+      bonusState: {},
+      totalWin: 0,
+      updatedWallet: {
+        coins: 5145,
+        gems: 20,
+        lifetimeSpins: 3,
+        lifetimeWins: 220
+      },
+      jackpotLadder: {
+        ember: 1220,
+        relic: 3826,
+        mythic: 9526,
+        throne: 28026
+      }
+    }
+  ];
+
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input.toString();
 
@@ -53,48 +180,9 @@ function mockFetchForOnlineFlow(): void {
     }
 
     if (url.endsWith("/spin")) {
-      return jsonResponse({
-        spinId: `spin-${Date.now()}`,
-        reels: [
-          ["ORB", "DRG", "QST"],
-          ["ORB", "DRG", "QST"],
-          ["ORB", "DRG", "QST"],
-          ["ORB", "DRG", "QST"],
-          ["ORB", "DRG", "QST"]
-        ],
-        wins: [
-          { kind: "line", amount: 120, detail: "Row 1 DRAGON x5" }
-        ],
-        triggers: {
-          emberLock: true,
-          freeQuest: true
-        },
-        bonusState: {
-          emberLock: {
-            active: true,
-            lockedCells: [0, 3, 6, 9, 12, 1],
-            respinsRemaining: 3
-          },
-          freeQuest: {
-            active: true,
-            spinsRemaining: 10,
-            retriggerChance: 0.2
-          }
-        },
-        totalWin: 120,
-        updatedWallet: {
-          coins: 5095,
-          gems: 20,
-          lifetimeSpins: 1,
-          lifetimeWins: 120
-        },
-        jackpotLadder: {
-          ember: 1210,
-          relic: 3810,
-          mythic: 9510,
-          throne: 28010
-        }
-      });
+      const response = spinResponses[Math.min(spinCall, spinResponses.length - 1)];
+      spinCall += 1;
+      return jsonResponse(response);
     }
 
     return jsonResponse({}, 404);
@@ -145,11 +233,11 @@ function resetStore(): void {
       dailyQuestProgress: 0
     },
     reels: [
-      ["DRG", "ORB", "QST"],
-      ["BLD", "RNG", "JWL"],
+      ["DRG", "ORB", "SCT"],
+      ["CHS", "RNE", "CRN"],
       ["DRG", "WLD", "ORB"],
-      ["QST", "BLD", "RNG"],
-      ["JWL", "DRG", "ORB"]
+      ["SCT", "CHS", "RNE"],
+      ["CRN", "DRG", "ORB"]
     ],
     winLines: [],
     lastWin: 0,
@@ -158,7 +246,8 @@ function resetStore(): void {
     online: true,
     queuedSpins: 0,
     apiMode: "remote",
-    activeMiniGame: "lantern-pick",
+    activeBonus: null,
+    bonusSessions: [],
     error: undefined
   });
 }
@@ -176,25 +265,60 @@ describe("slot e2e store flow", () => {
     });
   });
 
-  it("runs bootstrap -> spin -> mini-game reward progression", async () => {
-    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.01);
-
+  it("tracks bonus sessions from spin payloads, trigger flags fallback, and server events", async () => {
     await useGameStore.getState().bootstrap();
+
     await useGameStore.getState().spin();
 
-    const afterSpin = useGameStore.getState();
-    expect(afterSpin.profile?.playerId).toBe("local-dragon");
-    expect(afterSpin.emberLock.active).toBe(true);
-    expect(afterSpin.freeQuest.active).toBe(true);
-    expect(afterSpin.activeMiniGame).not.toBe("none");
-    expect(afterSpin.progression.forgeMeter).toBeGreaterThan(0);
+    let state = useGameStore.getState();
+    expect(state.profile?.playerId).toBe("local-dragon");
+    expect(state.activeBonus?.type).toBe("WHEEL_ASCENSION");
+    expect(state.activeBonus?.source).toBe("spin");
+    expect(state.activeBonus?.expectedTotalAward).toBeGreaterThan(0);
+    expect(state.bonusSessions).toHaveLength(1);
+    expect(state.progression.forgeMeter).toBeGreaterThan(0);
 
-    useGameStore.getState().awardMiniGameReward(180, 2);
-    const afterReward = useGameStore.getState();
-    expect(afterReward.wallet.coins).toBeGreaterThan(afterSpin.wallet.coins);
-    expect(afterReward.progression.relicShards).toBeGreaterThan(0);
+    await useGameStore.getState().spin();
 
-    randomSpy.mockRestore();
+    state = useGameStore.getState();
+    expect(state.activeBonus?.type).toBe("RELIC_VAULT");
+    expect(state.activeBonus?.source).toBe("spin");
+    expect(state.activeBonus?.sessionId).toContain("spin-2");
+    expect(state.bonusSessions).toHaveLength(2);
+
+    await useGameStore.getState().spin();
+
+    state = useGameStore.getState();
+    expect(state.activeBonus).toBeNull();
+    expect(state.bonusSessions).toHaveLength(2);
+
+    useGameStore.getState().consumeServerEvent({
+      type: "bonus",
+      ts: Date.now(),
+      payload: {
+        bonusPayload: {
+          type: "EMBER_RESPIN",
+          sessionId: "event-ember-1",
+          revealSeed: "seed-event-ember",
+          expectedTotalAward: 330,
+          precomputedOutcome: {
+            lockedCells: [0, 2, 4, 5],
+            respinsRemaining: 2,
+            collectorMultiplier: 2
+          },
+          jackpotAwards: [{ tier: "ember", amount: 1250, source: "event" }]
+        }
+      }
+    });
+
+    state = useGameStore.getState();
+    expect(state.activeBonus?.type).toBe("EMBER_RESPIN");
+    expect(state.activeBonus?.source).toBe("event");
+    expect(state.bonusSessions).toHaveLength(3);
+    expect(state.bonusSessions[0]?.sessionId).toBe("event-ember-1");
+
+    useGameStore.getState().dismissBonus();
+    expect(useGameStore.getState().activeBonus).toBeNull();
   });
 
   it("queues offline spin then resumes and drains queue", async () => {

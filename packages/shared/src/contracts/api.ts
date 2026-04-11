@@ -43,7 +43,10 @@ export type LineWin = z.infer<typeof lineWinSchema>;
 
 export const triggerFlagsSchema = z.object({
   emberLock: z.boolean(),
-  freeQuest: z.boolean()
+  freeQuest: z.boolean(),
+  emberRespinCollectorLock: z.boolean().default(false),
+  celestialWheelAscension: z.boolean().default(false),
+  relicVaultPick: z.boolean().default(false)
 });
 export type TriggerFlags = z.infer<typeof triggerFlagsSchema>;
 
@@ -72,6 +75,173 @@ export const freeQuestStateSchema = z.object({
 });
 export type FreeQuestStateContract = z.infer<typeof freeQuestStateSchema>;
 
+export const bonusTypeCanonicalSchema = z.enum([
+  "EMBER_RESPIN_COLLECTOR_LOCK",
+  "CELESTIAL_WHEEL_ASCENSION",
+  "RELIC_VAULT_PICK"
+]);
+export type BonusType = z.infer<typeof bonusTypeCanonicalSchema>;
+
+export const bonusTypeShortSchema = z.enum([
+  "EMBER_RESPIN",
+  "WHEEL_ASCENSION",
+  "RELIC_VAULT_PICK"
+]);
+export type BonusTypeShort = z.infer<typeof bonusTypeShortSchema>;
+
+export const bonusTypeInputSchema = z.union([
+  bonusTypeCanonicalSchema,
+  bonusTypeShortSchema
+]);
+export type BonusTypeInput = z.input<typeof bonusTypeInputSchema>;
+
+const bonusTypeAliasToCanonical: Record<BonusTypeInput, BonusType> = {
+  EMBER_RESPIN: "EMBER_RESPIN_COLLECTOR_LOCK",
+  EMBER_RESPIN_COLLECTOR_LOCK: "EMBER_RESPIN_COLLECTOR_LOCK",
+  WHEEL_ASCENSION: "CELESTIAL_WHEEL_ASCENSION",
+  CELESTIAL_WHEEL_ASCENSION: "CELESTIAL_WHEEL_ASCENSION",
+  RELIC_VAULT_PICK: "RELIC_VAULT_PICK"
+};
+
+const bonusTypeCanonicalToShort: Record<BonusType, BonusTypeShort> = {
+  EMBER_RESPIN_COLLECTOR_LOCK: "EMBER_RESPIN",
+  CELESTIAL_WHEEL_ASCENSION: "WHEEL_ASCENSION",
+  RELIC_VAULT_PICK: "RELIC_VAULT_PICK"
+};
+
+export function normalizeBonusType(type: BonusTypeInput): BonusType {
+  return bonusTypeAliasToCanonical[type];
+}
+
+export function toShortBonusType(type: BonusType): BonusTypeShort {
+  return bonusTypeCanonicalToShort[type];
+}
+
+export const normalizedBonusTypeSchema = bonusTypeInputSchema.transform((type) =>
+  normalizeBonusType(type)
+);
+export const bonusTypeSchema = bonusTypeCanonicalSchema;
+
+export const bonusJackpotAwardSchema = z.object({
+  tier: jackpotTierSchema,
+  amount: z.number().nonnegative(),
+  source: z.string().min(1)
+});
+export type BonusJackpotAward = z.infer<typeof bonusJackpotAwardSchema>;
+
+export const emberRespinJackpotOrbHitSchema = z.object({
+  cell: z.number().int().min(0).max(14),
+  tier: jackpotTierSchema
+});
+export type EmberRespinJackpotOrbHit = z.infer<typeof emberRespinJackpotOrbHitSchema>;
+
+export const emberRespinCollectorLockSessionSchema = z.object({
+  type: z.literal("EMBER_RESPIN_COLLECTOR_LOCK"),
+  lockedCells: z.array(z.number().int().min(0).max(14)),
+  orbValues: z.array(z.number().nonnegative()),
+  respinsRemaining: z.number().int().min(0).max(3),
+  collectorMultiplier: z.number().int().min(1),
+  guaranteedMysteryOrbAt: z.number().int().min(1).nullable(),
+  jackpotOrbHits: z.array(emberRespinJackpotOrbHitSchema),
+  finalAward: z.number().nonnegative()
+});
+export type EmberRespinCollectorLockSession = z.infer<
+  typeof emberRespinCollectorLockSessionSchema
+>;
+
+export const wheelWedgeKindSchema = z.enum(["coin", "multiplier", "jackpot", "respin"]);
+export type WheelWedgeKind = z.infer<typeof wheelWedgeKindSchema>;
+
+export const wheelWedgeSchema = z.object({
+  wedgeId: z.string().min(1),
+  kind: wheelWedgeKindSchema,
+  value: z.union([z.number().nonnegative(), jackpotTierSchema])
+});
+export type WheelWedge = z.infer<typeof wheelWedgeSchema>;
+
+export const wheelOutcomeBySpinSchema = z.object({
+  wedgeId: z.string().min(1),
+  resolvedAward: z.number().nonnegative(),
+  jackpotTier: jackpotTierSchema.optional()
+});
+export type WheelOutcomeBySpin = z.infer<typeof wheelOutcomeBySpinSchema>;
+
+export const celestialWheelAscensionSessionSchema = z.object({
+  type: z.literal("CELESTIAL_WHEEL_ASCENSION"),
+  wedgeMap: z.array(wheelWedgeSchema),
+  awardedSpins: z.number().int().min(0),
+  maxSpins: z.number().int().min(1),
+  outcomesBySpin: z.array(wheelOutcomeBySpinSchema),
+  jackpotTierHits: z.array(jackpotTierSchema),
+  finalAward: z.number().nonnegative()
+});
+export type CelestialWheelAscensionSession = z.infer<
+  typeof celestialWheelAscensionSessionSchema
+>;
+
+export const relicVaultHiddenSchema = z.enum([
+  "coin",
+  "multiplier",
+  "jackpotTier",
+  "bustShield"
+]);
+export type RelicVaultHidden = z.infer<typeof relicVaultHiddenSchema>;
+
+export const relicVaultBoardSlotSchema = z.object({
+  slotId: z.string().min(1),
+  hidden: relicVaultHiddenSchema,
+  value: z.union([z.number().nonnegative(), jackpotTierSchema]).optional()
+});
+export type RelicVaultBoardSlot = z.infer<typeof relicVaultBoardSlotSchema>;
+
+export const relicVaultPickSessionSchema = z.object({
+  type: z.literal("RELIC_VAULT_PICK"),
+  keyCount: z.number().int().min(1),
+  board: z.array(relicVaultBoardSlotSchema),
+  picksAllowed: z.number().int().min(1),
+  picksMade: z.number().int().min(0),
+  revealed: z.array(z.string().min(1)),
+  guaranteedNonBustFirstPick: z.boolean(),
+  jackpotTierHits: z.array(jackpotTierSchema),
+  finalAward: z.number().nonnegative()
+});
+export type RelicVaultPickSession = z.infer<typeof relicVaultPickSessionSchema>;
+
+export const bonusSessionSchema = z.discriminatedUnion("type", [
+  emberRespinCollectorLockSessionSchema,
+  celestialWheelAscensionSessionSchema,
+  relicVaultPickSessionSchema
+]);
+export type BonusSession = z.infer<typeof bonusSessionSchema>;
+
+export const bonusPayloadSchema = z.object({
+  type: normalizedBonusTypeSchema,
+  sessionId: z.string().min(1),
+  revealSeed: z.string().min(1),
+  expectedTotalAward: z.number().nonnegative(),
+  jackpotTiersHit: z.array(jackpotTierSchema),
+  jackpotAwards: z.array(bonusJackpotAwardSchema),
+  precomputedOutcome: bonusSessionSchema
+});
+export type BonusPayload = z.infer<typeof bonusPayloadSchema>;
+
+export function collectBonusSessionJackpotTiers(session: BonusSession): JackpotTier[] {
+  if (session.type === "EMBER_RESPIN_COLLECTOR_LOCK") {
+    const tiers = new Set<JackpotTier>();
+    for (const hit of session.jackpotOrbHits) {
+      tiers.add(hit.tier);
+    }
+
+    return [...tiers];
+  }
+
+  if (session.type === "CELESTIAL_WHEEL_ASCENSION") {
+    return [...new Set(session.jackpotTierHits)];
+  }
+
+  return [...new Set(session.jackpotTierHits)];
+}
+
 export const spinRequestSchema = z.object({
   sessionId: z.string().min(1),
   playerId: z.string().min(1).optional(),
@@ -98,6 +268,7 @@ export const spinResultSchema = z.object({
   triggers: triggerFlagsSchema,
   emberLockState: emberLockStateSchema.optional(),
   freeQuestState: freeQuestStateSchema.optional(),
+  bonusPayload: bonusPayloadSchema.nullable().optional(),
   signature: z.string().min(16).optional()
 });
 export type SpinResult = z.infer<typeof spinResultSchema>;

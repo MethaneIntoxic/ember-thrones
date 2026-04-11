@@ -1,5 +1,22 @@
 export type JackpotTier = "ember" | "relic" | "mythic" | "throne";
 
+export type BonusType = "EMBER_RESPIN" | "WHEEL_ASCENSION" | "RELIC_VAULT";
+
+export interface BonusJackpotAward {
+  tier: JackpotTier;
+  amount: number;
+  source: string;
+}
+
+export interface BonusPayload {
+  type: BonusType;
+  sessionId: string;
+  revealSeed: string;
+  precomputedOutcome: Record<string, unknown>;
+  expectedTotalAward: number;
+  jackpotAwards: BonusJackpotAward[];
+}
+
 export interface WalletState {
   coins: number;
   gems: number;
@@ -41,7 +58,13 @@ export interface FreeQuestStatus {
   retriggers: number;
 }
 
-export type SpinTrigger = "EMBER_LOCK" | "FREE_QUEST" | "MINI_GAME";
+export type SpinTrigger =
+  | "EMBER_LOCK"
+  | "FREE_QUEST"
+  | "EMBER_RESPIN"
+  | "WHEEL_ASCENSION"
+  | "RELIC_VAULT"
+  | "BONUS";
 
 export interface SpinResponse {
   spinId: string;
@@ -49,6 +72,7 @@ export interface SpinResponse {
   winCoins: number;
   winLines: number[];
   triggers: SpinTrigger[];
+  bonusPayload: BonusPayload | null;
   wallet: WalletState;
   jackpotLadder: Record<JackpotTier, number>;
   emberLock: EmberLockStatus;
@@ -61,7 +85,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:430
 const runtimeModeEnv = (import.meta.env.VITE_RUNTIME_MODE ?? "").toLowerCase();
 const RUNTIME_MODE: RuntimeMode = runtimeModeEnv === "hybrid" ? "hybrid" : "serverless";
 const DEFAULT_PROFILE_ID = "local-dragon";
-const SYMBOL_POOL = ["DRG", "ORB", "QST", "BLD", "RNG", "JWL", "WLD"];
+const SYMBOL_POOL = ["DRG", "ORB", "SCT", "CHS", "RNE", "CRN", "WLD"];
 
 interface ServerProfileEnvelope {
   profile: {
@@ -92,16 +116,31 @@ interface ServerSpinResponse {
   spinId: string;
   reels: string[][];
   wins: ServerSpinWin[];
-  triggers: {
+  triggers?: {
     emberLock: boolean;
     freeQuest: boolean;
     jackpotTier?: JackpotTier;
   };
+  triggerFlags?: {
+    emberRespin?: boolean;
+    wheelAscension?: boolean;
+    relicVaultPick?: boolean;
+    freeQuest?: boolean;
+  };
+  bonusPayload?: {
+    type?: string;
+    sessionId?: string;
+    revealSeed?: string;
+    precomputedOutcome?: unknown;
+    expectedTotalAward?: number;
+    jackpotAwards?: Array<{ tier?: string; amount?: number; source?: string }>;
+  } | null;
   bonusState: {
     emberLock?: {
       active: boolean;
       lockedCells: number[];
       respinsRemaining: number;
+      collectorMultiplier?: number;
     };
     freeQuest?: {
       active: boolean;
@@ -112,10 +151,49 @@ interface ServerSpinResponse {
   totalWin: number;
   updatedWallet: WalletState;
   jackpotLadder?: Partial<Record<JackpotTier, number>>;
+  jackpotSnapshotAfter?: Partial<Record<JackpotTier, number>>;
 }
 
 function randomFrom<T>(items: readonly T[]): T {
   return items[Math.floor(Math.random() * items.length)] as T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isJackpotTier(value: unknown): value is JackpotTier {
+  return value === "ember" || value === "relic" || value === "mythic" || value === "throne";
+}
+
+function normalizeBonusType(value: unknown): BonusType | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "EMBER_RESPIN") {
+    return "EMBER_RESPIN";
+  }
+
+  if (normalized === "WHEEL_ASCENSION") {
+    return "WHEEL_ASCENSION";
+  }
+
+  if (normalized === "RELIC_VAULT" || normalized === "RELIC_VAULT_PICK") {
+    return "RELIC_VAULT";
+  }
+
+  return null;
+}
+
+function toNonNegativeInt(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.floor(parsed));
 }
 
 function randomNonce(): string {
@@ -223,7 +301,7 @@ export class ApiClient {
   private mapSpinResponse(server: ServerSpinResponse): SpinResponse {
     this.fallbackWallet = { ...server.updatedWallet };
 
-    const ladder = server.jackpotLadder ?? {};
+    const ladder = server.jackpotSnapshotAfter ?? server.jackpotLadder ?? {};
     this.fallbackJackpot = {
       ember: ladder.ember ?? this.fallbackJackpot.ember,
       relic: ladder.relic ?? this.fallbackJackpot.relic,
@@ -242,37 +320,175 @@ export class ApiClient {
       })
       .filter((line): line is number => typeof line === "number");
 
-    const triggers: SpinTrigger[] = [];
-    if (server.triggers.emberLock) {
-      triggers.push("EMBER_LOCK");
+    const legacyTriggers = server.triggers ?? { emberLock: false, freeQuest: false };
+    const triggerFlags = server.triggerFlags ?? {};
+
+    const emberRespinTriggered = Boolean(triggerFlags.emberRespin ?? legacyTriggers.emberLock);
+    const wheelTriggered = Boolean(triggerFlags.wheelAscension);
+    const relicTriggered = Boolean(triggerFlags.relicVaultPick);
+    const freeQuestTriggered = Boolean(triggerFlags.freeQuest ?? legacyTriggers.freeQuest);
+
+    const triggerSet = new Set<SpinTrigger>();
+
+    if (emberRespinTriggered) {
+      triggerSet.add("EMBER_RESPIN");
+      triggerSet.add("EMBER_LOCK");
     }
-    if (server.triggers.freeQuest) {
-      triggers.push("FREE_QUEST");
+
+    if (wheelTriggered) {
+      triggerSet.add("WHEEL_ASCENSION");
     }
-    if (server.totalWin >= 75 && Math.random() < 0.18) {
-      triggers.push("MINI_GAME");
+
+    if (relicTriggered) {
+      triggerSet.add("RELIC_VAULT");
     }
+
+    if (freeQuestTriggered) {
+      triggerSet.add("FREE_QUEST");
+    }
+
+    if (emberRespinTriggered || wheelTriggered || relicTriggered) {
+      triggerSet.add("BONUS");
+    }
+
+    const totalWin = toNonNegativeInt(server.totalWin);
+    const bonusPayload = this.normalizeBonusPayload(server, totalWin, {
+      emberRespinTriggered,
+      wheelTriggered,
+      relicTriggered
+    });
 
     return {
       spinId: server.spinId,
       reels: server.reels,
-      winCoins: Math.max(0, Math.floor(server.totalWin ?? 0)),
+      winCoins: totalWin,
       winLines,
-      triggers,
+      triggers: Array.from(triggerSet),
+      bonusPayload,
       wallet: { ...this.fallbackWallet },
       jackpotLadder: { ...this.fallbackJackpot },
       emberLock: {
-        active: server.bonusState.emberLock?.active ?? server.triggers.emberLock,
+        active: server.bonusState.emberLock?.active ?? emberRespinTriggered,
         lockedCells: server.bonusState.emberLock?.lockedCells?.length ?? 0,
         respinsRemaining: server.bonusState.emberLock?.respinsRemaining ?? 0
       },
       freeQuest: {
-        active: server.bonusState.freeQuest?.active ?? server.triggers.freeQuest,
+        active: server.bonusState.freeQuest?.active ?? freeQuestTriggered,
         spinsRemaining: server.bonusState.freeQuest?.spinsRemaining ?? 0,
         retriggers: server.bonusState.freeQuest?.active
           ? Math.max(1, Math.round((server.bonusState.freeQuest.retriggerChance ?? 0.2) * 10))
           : 0
       }
+    };
+  }
+
+  private normalizeBonusPayload(
+    server: ServerSpinResponse,
+    totalWin: number,
+    flags: {
+      emberRespinTriggered: boolean;
+      wheelTriggered: boolean;
+      relicTriggered: boolean;
+    }
+  ): BonusPayload | null {
+    const payload = server.bonusPayload;
+    const explicitType = normalizeBonusType(payload?.type);
+
+    if (explicitType) {
+      const jackpotAwards = (payload?.jackpotAwards ?? [])
+        .map((award) => {
+          if (!isJackpotTier(award.tier)) {
+            return null;
+          }
+
+          return {
+            tier: award.tier,
+            amount: toNonNegativeInt(award.amount),
+            source: typeof award.source === "string" ? award.source : "trigger"
+          };
+        })
+        .filter((award): award is BonusJackpotAward => award !== null);
+
+      return {
+        type: explicitType,
+        sessionId:
+          typeof payload?.sessionId === "string" && payload.sessionId.length > 0
+            ? payload.sessionId
+            : `${server.spinId}-${explicitType.toLowerCase()}`,
+        revealSeed:
+          typeof payload?.revealSeed === "string" && payload.revealSeed.length > 0
+            ? payload.revealSeed
+            : randomNonce(),
+        precomputedOutcome: isRecord(payload?.precomputedOutcome) ? payload.precomputedOutcome : {},
+        expectedTotalAward: toNonNegativeInt(payload?.expectedTotalAward, totalWin),
+        jackpotAwards
+      };
+    }
+
+    const fallbackType: BonusType | null = flags.emberRespinTriggered
+      ? "EMBER_RESPIN"
+      : flags.wheelTriggered
+        ? "WHEEL_ASCENSION"
+        : flags.relicTriggered
+          ? "RELIC_VAULT"
+          : null;
+
+    if (!fallbackType) {
+      return null;
+    }
+
+    return {
+      type: fallbackType,
+      sessionId: `${server.spinId}-${fallbackType.toLowerCase()}`,
+      revealSeed: randomNonce(),
+      precomputedOutcome: this.buildFallbackOutcome(fallbackType, server, totalWin),
+      expectedTotalAward: Math.max(totalWin, Math.floor(totalWin * 1.15)),
+      jackpotAwards: []
+    };
+  }
+
+  private buildFallbackOutcome(
+    type: BonusType,
+    server: ServerSpinResponse,
+    totalWin: number
+  ): Record<string, unknown> {
+    if (type === "EMBER_RESPIN") {
+      return {
+        lockedCells: server.bonusState.emberLock?.lockedCells ?? [],
+        orbValues: (server.bonusState.emberLock?.lockedCells ?? []).map((_, index) => 25 + index * 10),
+        respinsRemaining: server.bonusState.emberLock?.respinsRemaining ?? 3,
+        collectorMultiplier: server.bonusState.emberLock?.collectorMultiplier ?? 1,
+        finalAward: Math.max(totalWin, 80)
+      };
+    }
+
+    if (type === "WHEEL_ASCENSION") {
+      return {
+        wedgeMap: [
+          { wedgeId: "coin-1", kind: "coin", value: 80 },
+          { wedgeId: "mult-2", kind: "multiplier", value: 2 },
+          { wedgeId: "jackpot-ember", kind: "jackpot", value: "ember" },
+          { wedgeId: "respin", kind: "respin", value: 1 }
+        ],
+        awardedSpins: 2,
+        maxSpins: 4,
+        outcomesBySpin: [{ wedgeId: "coin-1", resolvedAward: Math.max(60, totalWin) }],
+        finalAward: Math.max(totalWin, 90)
+      };
+    }
+
+    return {
+      keyCount: 3,
+      board: [
+        { slotId: "A1", hidden: "coin" },
+        { slotId: "A2", hidden: "multiplier" },
+        { slotId: "A3", hidden: "jackpotTier" }
+      ],
+      picksAllowed: 3,
+      picksMade: 0,
+      revealed: [],
+      guaranteedNonBustFirstPick: true,
+      finalAward: Math.max(totalWin, 70)
     };
   }
 
@@ -327,42 +543,104 @@ export class ApiClient {
     const reels = createMockReels();
     const { winLines, winCoins } = evaluateLineWins(reels);
     const orbCount = reels.flat().filter((symbol) => symbol === "ORB").length;
-    const questCount = reels.flat().filter((symbol) => symbol === "QST").length;
-    const miniGameTrigger = Math.random() < 0.12;
+    const scatterCount = reels.flat().filter((symbol) => symbol === "SCT").length;
+    const chestCount = reels.flat().filter((symbol) => symbol === "CHS").length;
 
-    const triggers: SpinTrigger[] = [];
+    const emberRespin = orbCount >= 6;
+    const wheelAscension = scatterCount >= 3 && reels.flat().includes("DRG");
+    const relicVault = chestCount >= 3 || (chestCount >= 2 && reels.flat().includes("WLD"));
 
-    if (orbCount >= 6) {
-      triggers.push("EMBER_LOCK");
+    const triggerSet = new Set<SpinTrigger>();
+
+    if (emberRespin) {
+      triggerSet.add("EMBER_RESPIN");
+      triggerSet.add("EMBER_LOCK");
     }
 
-    if (questCount >= 4) {
-      triggers.push("FREE_QUEST");
+    if (wheelAscension) {
+      triggerSet.add("WHEEL_ASCENSION");
     }
 
-    if (miniGameTrigger) {
-      triggers.push("MINI_GAME");
+    if (relicVault) {
+      triggerSet.add("RELIC_VAULT");
+    }
+
+    if (emberRespin || wheelAscension || relicVault) {
+      triggerSet.add("BONUS");
+    }
+
+    if (scatterCount >= 4) {
+      triggerSet.add("FREE_QUEST");
     }
 
     this.applyFallbackContribution(request.bet, winCoins);
 
+    const spinId = `mock-${randomNonce()}`;
+    const triggerFlags = {
+      emberRespin,
+      wheelAscension,
+      relicVaultPick: relicVault,
+      freeQuest: triggerSet.has("FREE_QUEST")
+    };
+
+    const bonusPayload = this.normalizeBonusPayload(
+      {
+        spinId,
+        reels,
+        wins: [],
+        triggers: {
+          emberLock: emberRespin,
+          freeQuest: triggerSet.has("FREE_QUEST")
+        },
+        triggerFlags,
+        bonusPayload: null,
+        bonusState: {
+          emberLock: emberRespin
+            ? {
+                active: true,
+                lockedCells: Array.from({ length: orbCount }, (_, index) => index),
+                respinsRemaining: 3,
+                collectorMultiplier: Math.random() < 0.33 ? 2 : 1
+              }
+            : undefined,
+          freeQuest: triggerSet.has("FREE_QUEST")
+            ? {
+                active: true,
+                spinsRemaining: 8,
+                retriggerChance: 0.2
+              }
+            : undefined
+        },
+        totalWin: winCoins,
+        updatedWallet: { ...this.fallbackWallet },
+        jackpotLadder: { ...this.fallbackJackpot }
+      },
+      winCoins,
+      {
+        emberRespinTriggered: emberRespin,
+        wheelTriggered: wheelAscension,
+        relicTriggered: relicVault
+      }
+    );
+
     return {
-      spinId: `mock-${randomNonce()}`,
+      spinId,
       reels,
       winCoins,
       winLines,
-      triggers,
+      triggers: Array.from(triggerSet),
+      bonusPayload,
       wallet: { ...this.fallbackWallet },
       jackpotLadder: { ...this.fallbackJackpot },
       emberLock: {
-        active: triggers.includes("EMBER_LOCK"),
+        active: triggerSet.has("EMBER_LOCK"),
         lockedCells: orbCount,
-        respinsRemaining: triggers.includes("EMBER_LOCK") ? 3 : 0
+        respinsRemaining: triggerSet.has("EMBER_LOCK") ? 3 : 0
       },
       freeQuest: {
-        active: triggers.includes("FREE_QUEST"),
-        spinsRemaining: triggers.includes("FREE_QUEST") ? 8 : 0,
-        retriggers: triggers.includes("FREE_QUEST") ? 1 : 0
+        active: triggerSet.has("FREE_QUEST"),
+        spinsRemaining: triggerSet.has("FREE_QUEST") ? 8 : 0,
+        retriggers: triggerSet.has("FREE_QUEST") ? 1 : 0
       }
     };
   }

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Orb symbol">
+  <defs>
+    <radialGradient id="orb" cx="38%" cy="30%" r="65%">
+      <stop offset="0" stop-color="#dff7ff"/>
+      <stop offset="0.5" stop-color="#77dfff"/>
+      <stop offset="1" stop-color="#1a71a6"/>
+    </radialGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="#16253a" stroke="#7ed9ff" stroke-width="4"/>
+  <circle cx="64" cy="64" r="34" fill="url(#orb)" stroke="#c6f5ff" stroke-width="4"/>
+  <circle cx="52" cy="48" r="8" fill="#f1fdff" opacity="0.75"/>
+</svg>
