@@ -1,4 +1,5 @@
-const CACHE_VERSION = "ember-thrones-v3";
+const BUILD_ID = new URL(self.location.href).searchParams.get("build") || "dev";
+const CACHE_VERSION = `ember-thrones-${BUILD_ID}`;
 const SCOPE_URL = new URL(self.registration.scope);
 const BASE_PATH = SCOPE_URL.pathname.endsWith("/")
   ? SCOPE_URL.pathname

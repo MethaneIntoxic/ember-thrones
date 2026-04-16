@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   freeQuestStanceSchema,
   jackpotTierSchema,
-  triggerFlagsSchema,
+  normalizedTriggerFlagsSchema,
   volatilityProfileSchema
 } from "./api";
 
@@ -31,7 +31,7 @@ export const spinResolvedEventSchema = eventBaseSchema.extend({
     totalWin: z.number().nonnegative(),
     orbCount: z.number().int().min(0),
     scatterCount: z.number().int().min(0),
-    triggers: triggerFlagsSchema
+    triggers: normalizedTriggerFlagsSchema
   })
 });
 

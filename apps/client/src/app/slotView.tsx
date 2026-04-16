@@ -5,6 +5,7 @@ import { PixiStage } from "../game/engine/pixiStage";
 import type { BonusType } from "../game/net/apiClient";
 import { EventClient } from "../game/net/eventClient";
 import { budgetForTier, inferPerfTier, PerfBudgetMonitor } from "../game/platform/perfBudget";
+import type { RuntimeExperience } from "../game/platform/runtimePolicy";
 import { useGameStore } from "../game/state/store";
 import { BonusPanels } from "../game/ui/bonusPanels";
 import { BonusPresentationOverlay } from "../game/ui/bonusPresentation";
@@ -24,7 +25,39 @@ function formatBonusType(type: BonusType): string {
     return "Wheel Ascension";
   }
 
+  if (type === "RELIC_VAULT_PICK") {
+    return "Relic Vault";
+  }
+
   return "Relic Vault";
+}
+
+function runtimeEventLabel(eventStreamState: "idle" | "connected" | "disconnected" | "unavailable"): string {
+  if (eventStreamState === "connected") {
+    return "Live events online";
+  }
+
+  if (eventStreamState === "disconnected") {
+    return "Live events reconnecting";
+  }
+
+  if (eventStreamState === "unavailable") {
+    return "Live events unavailable";
+  }
+
+  return "Live events standing by";
+}
+
+function runtimeToneClass(experience: RuntimeExperience): string {
+  if (experience === "connected") {
+    return "is-connected";
+  }
+
+  if (experience === "disconnected") {
+    return "is-disconnected";
+  }
+
+  return "is-demo";
 }
 
 export function SlotView(): JSX.Element {
@@ -38,12 +71,16 @@ export function SlotView(): JSX.Element {
   const spinning = useGameStore((state) => state.spinning);
   const online = useGameStore((state) => state.online);
   const queuedSpins = useGameStore((state) => state.queuedSpins);
+  const strandedQueuedSpins = useGameStore((state) => state.strandedQueuedSpins);
   const error = useGameStore((state) => state.error);
+  const runtimeCapabilities = useGameStore((state) => state.runtimeCapabilities);
+  const runtimeSummary = useGameStore((state) => state.runtimeSummary);
+  const queueSummary = useGameStore((state) => state.queueSummary);
+  const eventStreamState = useGameStore((state) => state.eventStreamState);
   const jackpotLadder = useGameStore((state) => state.jackpotLadder);
   const emberLock = useGameStore((state) => state.emberLock);
   const freeQuest = useGameStore((state) => state.freeQuest);
   const progression = useGameStore((state) => state.progression);
-  const apiMode = useGameStore((state) => state.apiMode);
   const activeBonus = useGameStore((state) => state.activeBonus);
   const bonusSessions = useGameStore((state) => state.bonusSessions);
 
@@ -287,7 +324,7 @@ export function SlotView(): JSX.Element {
     <article className="slot-view">
       <header className="top-banner">
         <div className="title-block">
-          <p className="panel-kicker">Original Dragon-Fantasy Vertical Slice</p>
+          <p className="panel-kicker">Authoritative Dragon-Fantasy Slot</p>
           <h1>Ember Thrones</h1>
           <p>
             Reel-triggered bonus volatility with deterministic reveal sessions and jackpot tension.
@@ -297,6 +334,27 @@ export function SlotView(): JSX.Element {
 
         <div className="perf-chip">{perfLabel}</div>
       </header>
+
+      <section className={`runtime-ribbon ${runtimeToneClass(runtimeCapabilities.experience)}`} aria-live="polite">
+        <div className="runtime-pill-row">
+          <span className={`runtime-badge ${runtimeToneClass(runtimeCapabilities.experience)}`}>
+            {runtimeCapabilities.label} Runtime
+          </span>
+          <span className="runtime-chip">
+            {runtimeCapabilities.configuredMode === "hybrid" ? "Connected channel configured" : "Demo-only build"}
+          </span>
+          <span className="runtime-chip">{runtimeEventLabel(eventStreamState)}</span>
+          <span className="runtime-chip">
+            {runtimeCapabilities.offlineQueue.supported
+              ? runtimeCapabilities.offlineQueue.canReplayNow
+                ? "Queue replay available"
+                : "Queue replay paused"
+              : "Queue replay disabled"}
+          </span>
+        </div>
+        <p className="runtime-summary">{runtimeSummary}</p>
+        <p className="runtime-queue">{queueSummary}</p>
+      </section>
 
       <section className="slot-grid">
         <div className="main-column">
@@ -312,6 +370,10 @@ export function SlotView(): JSX.Element {
             lastWin={lastWin}
             queuedSpins={queuedSpins}
             online={online}
+            runtimeExperience={runtimeCapabilities.experience}
+            runtimeLabel={runtimeCapabilities.label}
+            queueSupported={runtimeCapabilities.offlineQueue.supported}
+            queueCanReplayNow={runtimeCapabilities.offlineQueue.canReplayNow}
             onSpin={() => {
               void onSpin();
             }}
@@ -337,8 +399,14 @@ export function SlotView(): JSX.Element {
           emberLock={emberLock}
           freeQuest={freeQuest}
           progression={progression}
-          apiMode={apiMode}
-          activeBonusType={activeBonus?.type ?? null}
+          activeBonus={activeBonus}
+          bonusSessionCount={bonusSessions.length}
+          runtimeCapabilities={runtimeCapabilities}
+          runtimeSummary={runtimeSummary}
+          queueSummary={queueSummary}
+          eventStreamState={eventStreamState}
+          queuedSpins={queuedSpins}
+          strandedQueuedSpins={strandedQueuedSpins}
         />
       </section>
 

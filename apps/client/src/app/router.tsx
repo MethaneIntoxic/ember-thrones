@@ -1,7 +1,8 @@
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { Navigate, createBrowserRouter, RouterProvider } from "react-router-dom";
+import { resolveRuntimeCapabilities } from "../game/platform/runtimePolicy";
 import { SlotView } from "./slotView";
 
-const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
+const runtimeCapabilities = resolveRuntimeCapabilities();
 
 const router = createBrowserRouter(
   [
@@ -12,9 +13,13 @@ const router = createBrowserRouter(
           <SlotView />
         </main>
       )
+    },
+    {
+      path: "*",
+      element: <Navigate to="/" replace />
     }
   ],
-  { basename }
+  { basename: runtimeCapabilities.routePolicy.basename }
 );
 
 export function AppRouter(): JSX.Element {

@@ -191,9 +191,9 @@ function mockFetchForOnlineFlow(): void {
   vi.stubGlobal("fetch", fetchMock);
 }
 
-async function loadClientStateModules(): Promise<void> {
+async function loadClientStateModules(runtimeMode: "hybrid" | "serverless" = "hybrid"): Promise<void> {
   vi.resetModules();
-  vi.stubEnv("VITE_RUNTIME_MODE", "hybrid");
+  vi.stubEnv("VITE_RUNTIME_MODE", runtimeMode);
 
   const [{ useGameStore: store }, offlineSync] = await Promise.all([
     import("../../src/game/state/store"),
@@ -281,7 +281,7 @@ describe("slot e2e store flow", () => {
     await useGameStore.getState().spin();
 
     state = useGameStore.getState();
-    expect(state.activeBonus?.type).toBe("RELIC_VAULT");
+    expect(state.activeBonus?.type).toBe("RELIC_VAULT_PICK");
     expect(state.activeBonus?.source).toBe("spin");
     expect(state.activeBonus?.sessionId).toContain("spin-2");
     expect(state.bonusSessions).toHaveLength(2);
@@ -295,6 +295,7 @@ describe("slot e2e store flow", () => {
     useGameStore.getState().consumeServerEvent({
       type: "bonus",
       ts: Date.now(),
+      source: "server",
       payload: {
         bonusPayload: {
           type: "EMBER_RESPIN",
@@ -319,6 +320,28 @@ describe("slot e2e store flow", () => {
 
     useGameStore.getState().dismissBonus();
     expect(useGameStore.getState().activeBonus).toBeNull();
+  });
+
+  it("surfaces demo runtime truthfully and does not imply queue replay", async () => {
+    await loadClientStateModules("serverless");
+    resetStore();
+    clearOfflineSpinQueue();
+    mockFetchForOnlineFlow();
+
+    await useGameStore.getState().bootstrap();
+
+    let state = useGameStore.getState();
+    expect(state.runtimeCapabilities.experience).toBe("demo");
+    expect(state.runtimeCapabilities.offlineQueue.supported).toBe(false);
+    expect(state.eventStreamState).toBe("unavailable");
+    expect(state.queueSummary).toContain("disabled in demo runtime");
+
+    await useGameStore.getState().spin();
+
+    state = useGameStore.getState();
+    expect(state.apiMode).toBe("fallback");
+    expect(state.queuedSpins).toBe(0);
+    expect(loadOfflineSpinQueue()).toHaveLength(0);
   });
 
   it("queues offline spin then resumes and drains queue", async () => {

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Wheel Ascension crest">
+  <defs>
+    <radialGradient id="wheel-glow" cx="50%" cy="50%" r="55%">
+      <stop offset="0" stop-color="#eef7ff"/>
+      <stop offset="0.42" stop-color="#8ec8ff"/>
+      <stop offset="1" stop-color="#10234c"/>
+    </radialGradient>
+    <linearGradient id="wheel-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d7ecff"/>
+      <stop offset="0.55" stop-color="#7ab7ff"/>
+      <stop offset="1" stop-color="#4f78d6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="80" cy="80" r="72" fill="#10182d" stroke="url(#wheel-ring)" stroke-width="6"/>
+  <circle cx="80" cy="80" r="52" fill="url(#wheel-glow)" fill-opacity="0.16" stroke="#dcf0ff" stroke-opacity="0.4" stroke-width="2"/>
+  <circle cx="80" cy="80" r="30" fill="none" stroke="#cde7ff" stroke-width="4" stroke-opacity="0.9"/>
+  <circle cx="80" cy="80" r="10" fill="#eaf7ff" fill-opacity="0.9"/>
+  <path d="M80 22 L87 48 L73 48 Z" fill="#d8ecff"/>
+  <path d="M138 80 L112 87 L112 73 Z" fill="#d8ecff"/>
+  <path d="M80 138 L73 112 L87 112 Z" fill="#d8ecff"/>
+  <path d="M22 80 L48 73 L48 87 Z" fill="#d8ecff"/>
+  <path d="M118 42 L104 55 L96 42 L109 29 Z" fill="#9bc8ff" fill-opacity="0.88"/>
+  <path d="M118 118 L109 131 L96 118 L104 105 Z" fill="#9bc8ff" fill-opacity="0.88"/>
+  <path d="M42 118 L55 104 L42 96 L29 109 Z" fill="#9bc8ff" fill-opacity="0.88"/>
+  <path d="M42 42 L29 51 L42 64 L55 55 Z" fill="#9bc8ff" fill-opacity="0.88"/>
+</svg>

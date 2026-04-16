@@ -1,23 +1,25 @@
+import { resolveRuntimeMode, type RuntimeMode } from "../platform/runtimePolicy";
+
 export interface ServerEvent<T = unknown> {
+  id?: string;
   type: string;
   payload: T;
   ts: number;
+  source: "server" | "runtime";
 }
 
 export interface EventClientOptions {
   endpoint?: string;
   retryMs?: number;
+  runtimeMode?: RuntimeMode;
 }
-
-type RuntimeMode = "hybrid" | "serverless";
 
 type EventHandler = (event: ServerEvent) => void;
 type ErrorHandler = (error: Error) => void;
 
 const DEFAULT_ENDPOINT =
   (import.meta.env.VITE_SSE_URL as string | undefined) ?? "http://127.0.0.1:4300/events";
-const runtimeModeEnv = (import.meta.env.VITE_RUNTIME_MODE ?? "").toLowerCase();
-const RUNTIME_MODE: RuntimeMode = runtimeModeEnv === "hybrid" ? "hybrid" : "serverless";
+const RUNTIME_MODE: RuntimeMode = resolveRuntimeMode(import.meta.env.VITE_RUNTIME_MODE);
 
 export class EventClient {
   private readonly endpoint: string;
@@ -37,7 +39,7 @@ export class EventClient {
   public constructor(options: EventClientOptions = {}) {
     this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
     this.retryMs = options.retryMs ?? 2000;
-    this.runtimeMode = RUNTIME_MODE;
+    this.runtimeMode = options.runtimeMode ?? RUNTIME_MODE;
   }
 
   public connect(onEvent: EventHandler, onError?: ErrorHandler): void {
@@ -45,15 +47,93 @@ export class EventClient {
     this.onError = onError ?? null;
 
     if (this.runtimeMode === "serverless") {
-      this.onEvent({
-        type: "connected",
-        payload: { mode: "serverless" },
-        ts: Date.now()
+      this.emitRuntimeEvent("runtime.unavailable", {
+        mode: "serverless",
+        reason: "Live event stream is unavailable in demo runtime."
       });
       return;
     }
 
     this.openSource();
+  }
+
+  private emitRuntimeEvent(type: string, payload: Record<string, unknown>): void {
+    if (!this.onEvent) {
+      return;
+    }
+
+    this.onEvent({
+      type,
+      payload,
+      ts: Date.now(),
+      source: "runtime"
+    });
+  }
+
+  private toTimestamp(value: unknown): number {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    return Date.now();
+  }
+
+  private normalizeMessage(eventType: string, data: string): ServerEvent {
+    try {
+      const parsed = JSON.parse(data) as Record<string, unknown>;
+
+      if (eventType === "connected") {
+        return {
+          type: "runtime.connected",
+          payload: {
+            mode: this.runtimeMode,
+            ...(parsed ?? {})
+          },
+          ts: this.toTimestamp(parsed?.ts),
+          source: "runtime"
+        };
+      }
+
+      if (eventType === "ping") {
+        return {
+          type: "runtime.ping",
+          payload: parsed,
+          ts: this.toTimestamp(parsed?.ts),
+          source: "runtime"
+        };
+      }
+
+      if (typeof parsed.type === "string" && "payload" in parsed) {
+        return {
+          id: typeof parsed.id === "string" ? parsed.id : undefined,
+          type: parsed.type,
+          payload: parsed.payload,
+          ts: this.toTimestamp(parsed.ts),
+          source: "server"
+        };
+      }
+
+      return {
+        type: eventType,
+        payload: parsed,
+        ts: this.toTimestamp(parsed.ts),
+        source: "server"
+      };
+    } catch {
+      return {
+        type: eventType,
+        payload: data,
+        ts: Date.now(),
+        source: eventType.startsWith("runtime.") ? "runtime" : "server"
+      };
+    }
   }
 
   public close(): void {
@@ -81,16 +161,7 @@ export class EventClient {
           return;
         }
 
-        try {
-          const parsed = JSON.parse((message as MessageEvent).data) as ServerEvent;
-          this.onEvent(parsed);
-        } catch {
-          this.onEvent({
-            type: eventType,
-            payload: (message as MessageEvent).data,
-            ts: Date.now()
-          });
-        }
+        this.onEvent(this.normalizeMessage(eventType, (message as MessageEvent).data));
       });
     }
 
@@ -99,19 +170,14 @@ export class EventClient {
         return;
       }
 
-      try {
-        const parsed = JSON.parse(message.data) as ServerEvent;
-        this.onEvent(parsed);
-      } catch {
-        this.onEvent({
-          type: "raw",
-          payload: message.data,
-          ts: Date.now()
-        });
-      }
+      this.onEvent(this.normalizeMessage("raw", message.data));
     };
 
     source.onerror = () => {
+      this.emitRuntimeEvent("runtime.disconnected", {
+        mode: this.runtimeMode,
+        endpoint: this.endpoint
+      });
       this.onError?.(new Error("SSE stream disconnected."));
       source.close();
 

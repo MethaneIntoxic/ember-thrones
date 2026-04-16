@@ -1,4 +1,7 @@
-# Ember Thrones Start-to-Ship TODOs
+# Ember Thrones Historical Start-to-Ship TODOs
+
+This checklist is historical context for the original prototype program.
+It has been superseded by the current product direction: authoritative reel-triggered bonuses, explicit connected-versus-demo runtime channels, and retirement of the old mini-game plan.
 
 ## Phase 0 - Program Guardrails
 - [x] Lock volatility profile to medium.

@@ -2,19 +2,77 @@ import type { SpinRequest } from "../net/apiClient";
 
 const OFFLINE_SPIN_KEY = "dragon_link_offline_spin_queue";
 
+export type OfflineReplayPolicy = "server-authoritative" | "unknown";
+
 export interface OfflineQueuedSpin extends SpinRequest {
   queuedAt: number;
+  replayPolicy: OfflineReplayPolicy;
 }
 
 export interface DrainQueueResult<T> {
   processed: number;
   failed: number;
   remaining: number;
+  queuedRemaining: number;
+  stranded: number;
   lastResult: T | null;
+}
+
+export interface OfflineQueueSnapshot {
+  total: number;
+  queued: number;
+  stranded: number;
 }
 
 function isBrowserStorageAvailable(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeQueuedSpin(candidate: unknown): OfflineQueuedSpin | null {
+  if (!isRecord(candidate)) {
+    return null;
+  }
+
+  const profileId =
+    typeof candidate.profileId === "string"
+      ? candidate.profileId
+      : typeof candidate.playerId === "string"
+        ? candidate.playerId
+        : null;
+
+  const linesMode =
+    typeof candidate.linesMode === "number"
+      ? candidate.linesMode
+      : typeof candidate.lines === "number"
+        ? candidate.lines
+        : null;
+
+  if (
+    !profileId ||
+    typeof candidate.sessionId !== "string" ||
+    typeof candidate.bet !== "number" ||
+    linesMode === null ||
+    typeof candidate.clientNonce !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    profileId,
+    playerId: profileId,
+    sessionId: candidate.sessionId,
+    bet: candidate.bet,
+    linesMode,
+    lines: linesMode,
+    clientNonce: candidate.clientNonce,
+    queuedAt: typeof candidate.queuedAt === "number" ? candidate.queuedAt : Date.now(),
+    replayPolicy:
+      candidate.replayPolicy === "server-authoritative" ? "server-authoritative" : "unknown"
+  };
 }
 
 export function loadOfflineSpinQueue(): OfflineQueuedSpin[] {
@@ -33,7 +91,9 @@ export function loadOfflineSpinQueue(): OfflineQueuedSpin[] {
       return [];
     }
 
-    return parsed.filter((item) => typeof item.bet === "number" && typeof item.sessionId === "string");
+    return parsed
+      .map((item) => normalizeQueuedSpin(item))
+      .filter((item): item is OfflineQueuedSpin => item !== null);
   } catch {
     return [];
   }
@@ -47,12 +107,37 @@ export function saveOfflineSpinQueue(queue: OfflineQueuedSpin[]): void {
   window.localStorage.setItem(OFFLINE_SPIN_KEY, JSON.stringify(queue));
 }
 
-export function enqueueOfflineSpin(request: SpinRequest): OfflineQueuedSpin[] {
+export function getOfflineSpinQueueSnapshot(): OfflineQueueSnapshot {
   const queue = loadOfflineSpinQueue();
+  const queued = queue.filter((item) => item.replayPolicy === "server-authoritative").length;
+
+  return {
+    total: queue.length,
+    queued,
+    stranded: queue.length - queued
+  };
+}
+
+export function enqueueOfflineSpin(
+  request: SpinRequest,
+  replayPolicy: OfflineReplayPolicy = "server-authoritative"
+): OfflineQueuedSpin[] {
+  const queue = loadOfflineSpinQueue();
+  const profileId = request.profileId || request.playerId;
+  const linesMode = request.lines ?? request.linesMode;
+
+  if (!profileId) {
+    return queue;
+  }
 
   queue.push({
     ...request,
-    queuedAt: Date.now()
+    profileId,
+    playerId: request.playerId ?? profileId,
+    linesMode,
+    lines: linesMode,
+    queuedAt: Date.now(),
+    replayPolicy
   });
 
   saveOfflineSpinQueue(queue);
@@ -76,6 +161,8 @@ export async function drainOfflineSpinQueue<T>(
       processed: 0,
       failed: 0,
       remaining: 0,
+      queuedRemaining: 0,
+      stranded: 0,
       lastResult: null
     };
   }
@@ -84,23 +171,31 @@ export async function drainOfflineSpinQueue<T>(
   let processed = 0;
   let failed = 0;
   let lastResult: T | null = null;
+  let index = 0;
 
-  while (remainingQueue.length > 0) {
-    const current = remainingQueue[0];
+  while (index < remainingQueue.length) {
+    const current = remainingQueue[index];
     if (!current) {
       break;
+    }
+
+    if (current.replayPolicy !== "server-authoritative") {
+      index += 1;
+      continue;
     }
 
     try {
       lastResult = await sender({
         profileId: current.profileId,
+        playerId: current.playerId ?? current.profileId,
         sessionId: current.sessionId,
         bet: current.bet,
         linesMode: current.linesMode,
+        lines: current.lines ?? current.linesMode,
         clientNonce: current.clientNonce
       });
 
-      remainingQueue.shift();
+      remainingQueue.splice(index, 1);
       processed += 1;
       saveOfflineSpinQueue(remainingQueue);
     } catch {
@@ -109,10 +204,16 @@ export async function drainOfflineSpinQueue<T>(
     }
   }
 
+  const queuedRemaining = remainingQueue.filter(
+    (item) => item.replayPolicy === "server-authoritative"
+  ).length;
+
   return {
     processed,
     failed,
     remaining: remainingQueue.length,
+    queuedRemaining,
+    stranded: remainingQueue.length - queuedRemaining,
     lastResult
   };
 }

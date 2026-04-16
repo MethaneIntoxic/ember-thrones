@@ -1,19 +1,33 @@
-# Local Run Guide (Serverless First)
+# Local Run Guide
 
 ## Prerequisites
 - Node.js 20.19+
 - npm 10+
 - PowerShell 5.1+
 
-## Preferred Operator Scripts
+## Connected Local Stack
+
+Use this mode when validating server-authoritative behavior:
+
+- `npm run desktop:local`
+
+URLs:
+- Client: http://127.0.0.1:5173
+- Server: http://127.0.0.1:4300
+
+This path exercises signed server responses, replay guard, durable bonus sessions, queue replay, and bonus resume or claim routes.
+
+## Demo Preview and Pages Parity
+
+Use this mode when validating the optional static demo channel:
 
 Install once:
 - `npm install`
 
-Serverless desktop preview (build + local preview):
+Demo desktop preview (build + local preview):
 - `powershell -ExecutionPolicy Bypass -File .\run-desktop.ps1`
 
-Serverless mobile PWA preview on LAN (build + preview + phone URLs):
+Demo mobile PWA preview on LAN (build + preview + phone URLs):
 - `powershell -ExecutionPolicy Bypass -File .\run-mobile-pwa.ps1`
 
 Publish GitHub Pages artifact and trigger deploy workflow:
@@ -26,18 +40,7 @@ Publish GitHub Pages artifact and trigger deploy workflow:
 3. Ensure Actions permission allows workflow runs for this repository.
 4. Push your branch to `main` or `master`, or run `npm run publish:pages`.
 
-Detailed steps are in [serverless-pages.md](serverless-pages.md).
-
-## Full Local Stack (Client + Server)
-
-Use this mode when validating server-authoritative behavior:
-- `npm run desktop:local`
-
-URLs:
-- Client: http://127.0.0.1:5173
-- Server: http://127.0.0.1:4300
-
-This path uses signed server responses, replay guard, and SQLite persistence.
+Detailed demo-channel steps are in [serverless-pages.md](serverless-pages.md).
 
 ## Mobile PWA Dev (Legacy Dev Loop)
 
@@ -58,3 +61,5 @@ Install as PWA:
 ## Verification
 - `npm run build`
 - `npm run test`
+- `npm run lint`
+- `npm run sim`

@@ -1,232 +1,250 @@
-import { createHash } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { createDefaultProfile } from "../seeds/defaultProfile.js";
+import { bonusSessionActionRequestSchema } from "@ember-thrones/shared";
+import {
+  advanceBonusSession,
+  claimBonusSession,
+  resumeBonusSession,
+} from "../lib/bonusSessions.js";
 
-type BonusMode = "lantern-pick" | "sky-path" | "wyrm-duel";
-
-interface BonusProgress {
-  sessionId: string;
-  profileId: string;
-  mode: BonusMode;
-  seed: string;
-  stage: number;
-  rewardCoins: number;
-  resolved: boolean;
-  claimed: boolean;
-  history: Array<{
-    stage: number;
-    action: string;
-    reward: number;
-  }>;
-  updatedAt: string;
-}
-
-const activeBonuses = new Map<string, BonusProgress>();
-
-const startBonusBodySchema = z.object({
-  sessionId: z.string().trim().min(1),
-  profileId: z.string().trim().min(1).optional(),
-  mode: z.enum(["lantern-pick", "sky-path", "wyrm-duel"]).default("lantern-pick"),
-  seed: z.string().trim().min(4).max(64).optional(),
+const paramsWithBonusSessionIdSchema = z.object({
+  bonusSessionId: z.string().trim().min(1),
 });
 
-const advanceBonusBodySchema = z.object({
-  sessionId: z.string().trim().min(1),
-  action: z.string().trim().min(1).max(48),
-});
-
-const resolveBonusBodySchema = z.object({
+const paramsWithSessionIdSchema = z.object({
   sessionId: z.string().trim().min(1),
 });
 
-const deterministicReward = (seed: string, stage: number, action: string): number => {
-  const digest = createHash("sha256")
-    .update(`${seed}|${stage}|${action}`)
-    .digest();
-  const bucket = (digest[0] ?? 0) % 41;
-  return 10 + bucket;
+const resumableStatuses = ["PENDING", "ACTIVE", "COMPLETED"] as const;
+
+const buildReference = (session: {
+  id: string;
+  type: string;
+  status: string;
+}) => ({
+  id: session.id,
+  type: session.type,
+  status: session.status,
+});
+
+const syncSessionBonusState = (
+  app: Parameters<FastifyPluginAsync>[0],
+  bonusSession: {
+    id: string;
+    sessionId: string;
+    type: string;
+    status: string;
+    updatedAt: string;
+  },
+  lastActionType: string
+): void => {
+  const gameSession = app.db.getSession(bonusSession.sessionId);
+  if (!gameSession) {
+    return;
+  }
+
+  app.db.updateSessionState(gameSession.id, {
+    ...gameSession.state,
+    activeBonusSessionRef:
+      bonusSession.status === "CLAIMED" || bonusSession.status === "EXPIRED"
+        ? null
+        : buildReference(bonusSession),
+    lastBonusSessionRef: buildReference(bonusSession),
+    lastBonusActionType: lastActionType,
+    lastBonusUpdatedAt: bonusSession.updatedAt,
+  });
+};
+
+const loadSnapshot = (app: Parameters<FastifyPluginAsync>[0], bonusSessionId: string) => {
+  const session = app.db.getBonusSession(bonusSessionId);
+  if (!session) {
+    return null;
+  }
+
+  return {
+    session,
+    actions: app.db.listBonusActions(bonusSessionId),
+  };
 };
 
 const bonusRoutes: FastifyPluginAsync = async (app) => {
-  app.post("/bonus/start", async (request, reply) => {
-    const body = startBonusBodySchema.parse(request.body ?? {});
-    const existingSession = app.db.getSession(body.sessionId);
+  app.get("/bonus/session/:sessionId/active", async (request, reply) => {
+    const params = paramsWithSessionIdSchema.parse(request.params ?? {});
+    const session = app.db.getLatestBonusSessionForGameSession(params.sessionId, [...resumableStatuses]);
 
-    const profileId = existingSession?.profileId ?? body.profileId;
-    if (!profileId) {
-      return reply.code(400).send({
-        message: "profileId is required when starting bonus for a new session",
+    if (!session) {
+      return reply.code(404).send({
+        message: "No resumable bonus session for game session",
       });
     }
 
-    const profile = app.db.ensureProfile(createDefaultProfile({ id: profileId }));
-    const session = app.db.upsertSession({
-      id: body.sessionId,
-      profileId: profile.id,
-      volatility: existingSession?.volatility ?? "medium",
-      state: existingSession?.state ?? {},
-    });
-
-    const seed = body.seed ?? `${body.sessionId}:${session.updatedAt}`;
-    const progress: BonusProgress = {
-      sessionId: session.id,
-      profileId: profile.id,
-      mode: body.mode,
-      seed,
-      stage: 0,
-      rewardCoins: 0,
-      resolved: false,
-      claimed: false,
-      history: [],
-      updatedAt: new Date().toISOString(),
-    };
-
-    activeBonuses.set(session.id, progress);
-
-    app.db.updateSessionState(session.id, {
-      ...session.state,
-      bonus: {
-        mode: progress.mode,
-        stage: progress.stage,
-        rewardCoins: progress.rewardCoins,
-        resolved: progress.resolved,
-      },
-    });
-
-    app.eventBus.publish("bonus", {
-      profileId: profile.id,
-      sessionId: session.id,
-      action: "started",
-      mode: progress.mode,
-    });
-
-    return {
-      bonus: progress,
-    };
+    return loadSnapshot(app, session.id);
   });
 
-  app.post("/bonus/advance", async (request, reply) => {
-    const body = advanceBonusBodySchema.parse(request.body ?? {});
-    const progress = activeBonuses.get(body.sessionId);
+  app.get("/bonus/:bonusSessionId", async (request, reply) => {
+    const params = paramsWithBonusSessionIdSchema.parse(request.params ?? {});
+    const snapshot = loadSnapshot(app, params.bonusSessionId);
 
-    if (!progress) {
+    if (!snapshot) {
       return reply.code(404).send({
-        message: "No active bonus session",
+        message: "Bonus session not found",
       });
     }
 
-    if (progress.claimed) {
+    return snapshot;
+  });
+
+  app.post("/bonus/:bonusSessionId/resume", async (request, reply) => {
+    const params = paramsWithBonusSessionIdSchema.parse(request.params ?? {});
+    const snapshot = loadSnapshot(app, params.bonusSessionId);
+
+    if (!snapshot) {
+      return reply.code(404).send({
+        message: "Bonus session not found",
+      });
+    }
+
+    try {
+      const mutation = resumeBonusSession(snapshot.session);
+      const result = app.db.applyBonusSessionAction({
+        bonusSessionId: snapshot.session.id,
+        actionType: "RESUME",
+        requestPayload: {},
+        resultPayload: mutation.resultPayload,
+        progress: mutation.progress,
+        status: mutation.status,
+        actualAward: mutation.actualAward,
+      });
+
+      syncSessionBonusState(app, result.session, "RESUME");
+
+      app.eventBus.publish("bonus", {
+        profileId: result.session.profileId,
+        sessionId: result.session.sessionId,
+        bonusSessionId: result.session.id,
+        actionType: "RESUME",
+        status: result.session.status,
+      });
+
+      return {
+        session: result.session,
+        action: result.action,
+        actions: app.db.listBonusActions(result.session.id),
+      };
+    } catch (error) {
       return reply.code(409).send({
-        message: "Bonus already resolved and claimed",
+        message: error instanceof Error ? error.message : "Failed to resume bonus session",
+      });
+    }
+  });
+
+  app.post("/bonus/:bonusSessionId/actions", async (request, reply) => {
+    const params = paramsWithBonusSessionIdSchema.parse(request.params ?? {});
+    const body = bonusSessionActionRequestSchema.parse(request.body ?? {});
+    const snapshot = loadSnapshot(app, params.bonusSessionId);
+
+    if (!snapshot) {
+      return reply.code(404).send({
+        message: "Bonus session not found",
       });
     }
 
-    if (!progress.resolved) {
-      const nextStage = progress.stage + 1;
-      const reward = deterministicReward(progress.seed, nextStage, body.action);
-      const resolved = nextStage >= 3;
-
-      progress.stage = nextStage;
-      progress.rewardCoins += reward;
-      progress.resolved = resolved;
-      progress.updatedAt = new Date().toISOString();
-      progress.history.push({
-        stage: nextStage,
-        action: body.action,
-        reward,
+    try {
+      const mutation = advanceBonusSession(snapshot.session, body.actionType);
+      const result = app.db.applyBonusSessionAction({
+        bonusSessionId: snapshot.session.id,
+        actionType: body.actionType,
+        requestPayload: body.clientSelection ? { clientSelection: body.clientSelection } : {},
+        resultPayload: mutation.resultPayload,
+        progress: mutation.progress,
+        status: mutation.status,
+        actualAward: mutation.actualAward,
       });
 
-      activeBonuses.set(progress.sessionId, progress);
+      syncSessionBonusState(app, result.session, body.actionType);
+
+      app.eventBus.publish("bonus", {
+        profileId: result.session.profileId,
+        sessionId: result.session.sessionId,
+        bonusSessionId: result.session.id,
+        actionType: body.actionType,
+        status: result.session.status,
+      });
+
+      return {
+        session: result.session,
+        action: result.action,
+        actions: app.db.listBonusActions(result.session.id),
+      };
+    } catch (error) {
+      return reply.code(409).send({
+        message: error instanceof Error ? error.message : "Failed to advance bonus session",
+      });
+    }
+  });
+
+  app.post("/bonus/:bonusSessionId/claim", async (request, reply) => {
+    const params = paramsWithBonusSessionIdSchema.parse(request.params ?? {});
+    const snapshot = loadSnapshot(app, params.bonusSessionId);
+
+    if (!snapshot) {
+      return reply.code(404).send({
+        message: "Bonus session not found",
+      });
     }
 
-    const session = app.db.getSession(progress.sessionId);
-    if (session) {
-      app.db.updateSessionState(session.id, {
-        ...session.state,
-        bonus: {
-          mode: progress.mode,
-          stage: progress.stage,
-          rewardCoins: progress.rewardCoins,
-          resolved: progress.resolved,
+    try {
+      const mutation = claimBonusSession(snapshot.session);
+      const result = app.db.applyBonusSessionAction({
+        bonusSessionId: snapshot.session.id,
+        actionType: "CLAIM",
+        requestPayload: {},
+        resultPayload: mutation.resultPayload,
+        progress: mutation.progress,
+        status: mutation.status,
+        actualAward: mutation.actualAward,
+        walletDelta: {
+          coinsDelta: mutation.actualAward,
+          winsDelta: mutation.actualAward,
         },
       });
-    }
 
-    return {
-      bonus: progress,
-    };
-  });
+      syncSessionBonusState(app, result.session, "CLAIM");
 
-  app.post("/bonus/resolve", async (request, reply) => {
-    const body = resolveBonusBodySchema.parse(request.body ?? {});
-    const progress = activeBonuses.get(body.sessionId);
+      for (const award of result.session.jackpotAwards) {
+        if (award.amount <= 0) {
+          continue;
+        }
 
-    if (!progress) {
-      return reply.code(404).send({
-        message: "No active bonus session",
+        app.eventBus.publish("jackpot", {
+          profileId: result.session.profileId,
+          sessionId: result.session.sessionId,
+          bonusSessionId: result.session.id,
+          tier: award.tier,
+          amount: award.amount,
+        });
+      }
+
+      app.eventBus.publish("bonus", {
+        profileId: result.session.profileId,
+        sessionId: result.session.sessionId,
+        bonusSessionId: result.session.id,
+        actionType: "CLAIM",
+        status: result.session.status,
+        rewardCoins: mutation.actualAward,
       });
-    }
 
-    if (progress.claimed) {
+      return {
+        session: result.session,
+        action: result.action,
+        actions: app.db.listBonusActions(result.session.id),
+        wallet: result.wallet,
+      };
+    } catch (error) {
       return reply.code(409).send({
-        message: "Bonus already claimed",
+        message: error instanceof Error ? error.message : "Failed to claim bonus session",
       });
     }
-
-    progress.resolved = true;
-    progress.claimed = true;
-    progress.updatedAt = new Date().toISOString();
-
-    const updatedWallet = app.db.applyWalletDelta(progress.profileId, {
-      coinsDelta: progress.rewardCoins,
-      winsDelta: progress.rewardCoins,
-    });
-
-    const session = app.db.getSession(progress.sessionId);
-    if (session) {
-      app.db.updateSessionState(session.id, {
-        ...session.state,
-        bonus: {
-          mode: progress.mode,
-          stage: progress.stage,
-          rewardCoins: progress.rewardCoins,
-          resolved: true,
-          claimed: true,
-        },
-      });
-    }
-
-    app.eventBus.publish("bonus", {
-      profileId: progress.profileId,
-      sessionId: progress.sessionId,
-      action: "claimed",
-      rewardCoins: progress.rewardCoins,
-      mode: progress.mode,
-    });
-
-    return {
-      sessionId: progress.sessionId,
-      profileId: progress.profileId,
-      rewardCoins: progress.rewardCoins,
-      wallet: updatedWallet,
-      bonus: progress,
-    };
-  });
-
-  app.get("/bonus/:sessionId", async (request, reply) => {
-    const sessionId = z.string().trim().min(1).parse((request.params as { sessionId: string }).sessionId);
-    const bonus = activeBonuses.get(sessionId);
-
-    if (!bonus) {
-      return reply.code(404).send({
-        message: "No bonus state for session",
-      });
-    }
-
-    return {
-      bonus,
-    };
   });
 };
 

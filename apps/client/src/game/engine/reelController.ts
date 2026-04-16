@@ -15,6 +15,7 @@ interface SymbolCard {
   icon: Sprite;
   label: Text;
   symbol: string;
+  row: number;
 }
 
 interface SymbolPalette {
@@ -97,11 +98,17 @@ export class ReelController {
 
   private readonly rows = 3;
 
+  private readonly columnContainers: Container[] = [];
+
   private symbolCards: SymbolCard[][] = [];
 
   private boardWidth = 620;
 
   private boardHeight = 330;
+
+  private boardX = 0;
+
+  private boardY = 0;
 
   private cellWidth = 124;
 
@@ -133,14 +140,27 @@ export class ReelController {
   }
 
   public getCellCenters(): CellCenter[][] {
-    return this.symbolCards.map((column) =>
-      column.map((card) => ({
-        x: card.root.x,
-        y: card.root.y,
+    return this.symbolCards.map((column, columnIndex) => {
+      const columnRoot = this.columnContainers[columnIndex];
+      const offsetX = columnRoot?.x ?? 0;
+      const offsetY = columnRoot?.y ?? 0;
+
+      return column.map((card) => ({
+        x: offsetX + card.root.x,
+        y: offsetY + card.root.y,
         cellWidth: this.cellWidth,
         cellHeight: this.cellHeight
-      }))
-    );
+      }));
+    });
+  }
+
+  public getBoardBounds(): { x: number; y: number; width: number; height: number } {
+    return {
+      x: this.boardX,
+      y: this.boardY,
+      width: this.boardWidth,
+      height: this.boardHeight
+    };
   }
 
   public layout(stageWidth: number, stageHeight: number): void {
@@ -152,6 +172,9 @@ export class ReelController {
     const startX = (stageWidth - this.boardWidth) / 2;
     const startY = (stageHeight - this.boardHeight) / 2;
 
+    this.boardX = startX;
+    this.boardY = startY;
+
     const cardWidth = Math.max(48, Math.min(this.cellWidth - 10, this.cellWidth * 0.78));
     const cardHeight = Math.max(56, Math.min(this.cellHeight - 12, this.cellHeight * 0.78));
 
@@ -162,15 +185,25 @@ export class ReelController {
     this.container.position.set(0, 0);
 
     for (let col = 0; col < this.columns; col += 1) {
+      const columnRoot = this.columnContainers[col];
+      if (!columnRoot) {
+        continue;
+      }
+
+      columnRoot.position.set(startX + this.cellWidth * (col + 0.5), startY + this.cellHeight * 0.5);
+      columnRoot.scale.set(1);
+      columnRoot.alpha = 1;
+
       for (let row = 0; row < this.rows; row += 1) {
         const card = this.symbolCards[col]?.[row];
         if (!card) {
           continue;
         }
 
-        card.root.x = startX + this.cellWidth * (col + 0.5);
-        card.root.y = startY + this.cellHeight * (row + 0.5);
-        this.renderCard(card, false, row === 1);
+        card.root.x = 0;
+        card.root.y = this.cellHeight * row;
+        card.root.rotation = 0;
+        this.renderCard(card, false, card.row === 1);
       }
     }
   }
@@ -183,19 +216,19 @@ export class ReelController {
           continue;
         }
 
-        this.setCardSymbol(card, reels[col]?.[row] ?? randomSymbol());
+        this.setCardSymbol(card, reels[col]?.[row] ?? randomSymbol(), false);
       }
     }
   }
 
   public async spinTo(reels: string[][], timeline: EffectTimeline): Promise<void> {
-    for (let i = 0; i < 8; i += 1) {
-      this.randomizeAllSymbols();
-      await timeline.wait(42 + i * 8);
-    }
+    await Promise.all(
+      this.columnContainers.map((_, columnIndex) =>
+        this.animateColumnSpin(columnIndex, reels[columnIndex] ?? [], timeline)
+      )
+    );
 
-    this.setSymbols(reels);
-    await timeline.pulse(this.container, 1.03, 180);
+    await timeline.pulse(this.container, 1.03, 220);
   }
 
   public setWinTint(winLines: number[]): void {
@@ -208,14 +241,18 @@ export class ReelController {
           continue;
         }
 
-        this.renderCard(card, activeRows.has(row), row === 1);
+        this.renderCard(card, activeRows.has(row), card.row === 1);
       }
     }
   }
 
   private buildGrid(): void {
     for (let col = 0; col < this.columns; col += 1) {
+      const columnRoot = new Container();
       const column: SymbolCard[] = [];
+
+      this.columnContainers.push(columnRoot);
+      this.container.addChild(columnRoot);
 
       for (let row = 0; row < this.rows; row += 1) {
         const symbol = randomSymbol();
@@ -239,11 +276,12 @@ export class ReelController {
           frame,
           icon,
           label,
-          symbol
+          symbol,
+          row
         };
 
         this.renderCard(card, false, row === 1);
-        this.container.addChild(root);
+        columnRoot.addChild(root);
         column.push(card);
       }
 
@@ -259,7 +297,7 @@ export class ReelController {
           continue;
         }
 
-        this.setCardSymbol(card, randomSymbol());
+        this.setCardSymbol(card, randomSymbol(), false);
       }
     }
   }
@@ -272,23 +310,116 @@ export class ReelController {
           continue;
         }
 
-        card.icon.texture = Texture.from(spriteFor(card.symbol));
-        card.icon.tint = 0xffffff;
+        this.applySymbolTexture(card);
       }
     }
   }
 
-  private setCardSymbol(card: SymbolCard, rawSymbol: string): void {
+  private async animateColumnSpin(
+    columnIndex: number,
+    targetSymbols: string[],
+    timeline: EffectTimeline
+  ): Promise<void> {
+    const columnRoot = this.columnContainers[columnIndex];
+    const cards = this.symbolCards[columnIndex];
+
+    if (!columnRoot || !cards) {
+      return;
+    }
+
+    await timeline.wait(columnIndex * 70);
+
+    const baseY = this.boardY + this.cellHeight * 0.5;
+    const durationMs = 280 + columnIndex * 55;
+    const totalSteps = 6 + columnIndex * 2;
+    let previousStep = -1;
+
+    await timeline.tween(durationMs, (progress) => {
+      const step = Math.floor(progress * totalSteps);
+      if (step !== previousStep) {
+        previousStep = step;
+        for (const card of cards) {
+          this.setCardSymbol(card, randomSymbol(), false);
+        }
+      }
+
+      const spinWave = Math.sin(progress * Math.PI * (1.9 + columnIndex * 0.12));
+      const verticalTravel = (1 - progress) * this.cellHeight * 0.34;
+      columnRoot.y = baseY - spinWave * verticalTravel;
+      columnRoot.scale.x = 1 + (1 - progress) * 0.015;
+      columnRoot.scale.y = 0.92 + progress * 0.08;
+      columnRoot.alpha = 0.7 + progress * 0.3;
+
+      for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
+        const card = cards[rowIndex];
+        if (!card) {
+          continue;
+        }
+
+        const laneOffset = (1 - progress) * (rowIndex + 1) * 3.2;
+        card.root.y = this.cellHeight * rowIndex - laneOffset * Math.sin(progress * Math.PI * 2 + rowIndex * 0.46);
+        card.root.rotation = (1 - progress) * 0.02 * Math.sin(progress * Math.PI * 6 + rowIndex);
+      }
+    });
+
+    for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
+      const card = cards[rowIndex];
+      if (!card) {
+        continue;
+      }
+
+      this.setCardSymbol(card, targetSymbols[rowIndex] ?? randomSymbol(), false);
+    }
+
+    await timeline.tween(180, (progress) => {
+      const settleWave = Math.sin(progress * Math.PI);
+      const settle = 1 - Math.pow(1 - progress, 3);
+      columnRoot.y = baseY - (1 - settle) * this.cellHeight * 0.16;
+      columnRoot.scale.set(1 + settleWave * 0.018, 1 - settleWave * 0.03);
+
+      for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
+        const card = cards[rowIndex];
+        if (!card) {
+          continue;
+        }
+
+        card.root.y = this.cellHeight * rowIndex + (rowIndex === 1 ? -2 : 1) * settleWave;
+        card.root.rotation = 0;
+      }
+    });
+
+    columnRoot.position.y = baseY;
+    columnRoot.scale.set(1);
+    columnRoot.alpha = 1;
+
+    for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
+      const card = cards[rowIndex];
+      if (!card) {
+        continue;
+      }
+
+      card.root.y = this.cellHeight * rowIndex;
+      card.root.rotation = 0;
+    }
+  }
+
+  private setCardSymbol(card: SymbolCard, rawSymbol: string, emphasized: boolean): void {
     const symbol = normalizeSymbol(rawSymbol);
     card.symbol = symbol;
-    if (this.texturesReady) {
-      card.icon.texture = Texture.from(spriteFor(symbol));
-      card.icon.tint = 0xffffff;
-    } else {
-      card.icon.texture = Texture.WHITE;
-      card.icon.tint = 0xffffff;
-    }
+    this.applySymbolTexture(card);
     card.label.text = symbol;
+    this.renderCard(card, emphasized, card.row === 1);
+  }
+
+  private applySymbolTexture(card: SymbolCard): void {
+    if (this.texturesReady) {
+      card.icon.texture = Texture.from(spriteFor(card.symbol));
+      card.icon.tint = 0xffffff;
+      return;
+    }
+
+    card.icon.texture = Texture.WHITE;
+    card.icon.tint = paletteFor(card.symbol).border;
   }
 
   private renderCard(card: SymbolCard, emphasized: boolean, centerRow: boolean): void {
@@ -306,7 +437,7 @@ export class ReelController {
         height * 1.04,
         Math.max(cornerRadius + 3, 12)
       )
-      .fill({ color: palette.glow, alpha: emphasized ? 0.32 : 0.12 });
+      .fill({ color: palette.glow, alpha: emphasized ? 0.34 : centerRow ? 0.18 : 0.12 });
 
     card.frame.clear();
     card.frame
@@ -319,6 +450,12 @@ export class ReelController {
         alpha: emphasized ? 1 : 0.76,
         width: emphasized ? 4 : 2
       });
+    card.frame
+      .roundRect(-width * 0.44, -height * 0.42, width * 0.88, height * 0.24, Math.max(cornerRadius - 6, 8))
+      .fill({ color: 0xffffff, alpha: emphasized ? 0.12 : 0.06 });
+    card.frame
+      .roundRect(-width * 0.38, height * 0.16, width * 0.76, height * 0.16, Math.max(cornerRadius - 9, 6))
+      .fill({ color: palette.border, alpha: centerRow ? 0.15 : 0.08 });
 
     if (width >= 72 && height >= 74) {
       card.frame
@@ -330,7 +467,7 @@ export class ReelController {
     card.icon.width = iconSize;
     card.icon.height = iconSize;
     card.icon.y = -height * 0.11;
-    card.icon.alpha = emphasized ? 1 : 0.92;
+    card.icon.alpha = emphasized ? 1 : centerRow ? 0.96 : 0.9;
 
     card.label.y = height * 0.31;
     card.label.style = this.createLabelStyle(this.activeLabelSize, palette.ink, emphasized);

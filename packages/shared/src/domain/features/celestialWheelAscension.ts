@@ -141,7 +141,7 @@ export function resolveCelestialWheelAscension(
   }
 
   return {
-    type: "CELESTIAL_WHEEL_ASCENSION",
+    type: "WHEEL_ASCENSION",
     wedgeMap,
     awardedSpins: outcomesBySpin.length,
     maxSpins,

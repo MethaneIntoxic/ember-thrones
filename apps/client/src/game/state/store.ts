@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   apiClient,
   createSpinRequest,
+  RemoteAuthoritativeUnavailableError,
   type BonusPayload,
   type BonusType,
   type ConfigResponse,
@@ -16,11 +17,14 @@ import type { ServerEvent } from "../net/eventClient";
 import {
   drainOfflineSpinQueue,
   enqueueOfflineSpin,
+  getOfflineSpinQueueSnapshot,
   loadOfflineSpinQueue
 } from "../platform/offlineSync";
+import { resolveRuntimeCapabilities, type RuntimeCapabilities } from "../platform/runtimePolicy";
 
 type JackpotLadder = Record<JackpotTier, number>;
 type BonusSource = "spin" | "event";
+type EventStreamState = "idle" | "connected" | "disconnected" | "unavailable";
 
 const MAX_BONUS_SESSIONS = 18;
 
@@ -29,6 +33,7 @@ export interface ActiveBonusPresentation {
   sessionId: string;
   revealSeed: string;
   expectedTotalAward: number;
+  jackpotTiersHit: BonusPayload["jackpotTiersHit"];
   jackpotAwards: BonusPayload["jackpotAwards"];
   precomputedOutcome: Record<string, unknown>;
   triggerSpinId: string;
@@ -104,16 +109,16 @@ function normalizeBonusType(value: unknown): BonusType | null {
   }
 
   const normalized = value.trim().toUpperCase();
-  if (normalized === "EMBER_RESPIN") {
+  if (normalized === "EMBER_RESPIN" || normalized === "EMBER_RESPIN_COLLECTOR_LOCK") {
     return "EMBER_RESPIN";
   }
 
-  if (normalized === "WHEEL_ASCENSION") {
+  if (normalized === "WHEEL_ASCENSION" || normalized === "CELESTIAL_WHEEL_ASCENSION") {
     return "WHEEL_ASCENSION";
   }
 
   if (normalized === "RELIC_VAULT" || normalized === "RELIC_VAULT_PICK") {
-    return "RELIC_VAULT";
+    return "RELIC_VAULT_PICK";
   }
 
   return null;
@@ -138,6 +143,7 @@ function toBonusPresentation(
     sessionId: payload.sessionId,
     revealSeed: payload.revealSeed,
     expectedTotalAward: payload.expectedTotalAward,
+    jackpotTiersHit: payload.jackpotTiersHit,
     jackpotAwards: payload.jackpotAwards,
     precomputedOutcome: payload.precomputedOutcome,
     triggerSpinId: spinId,
@@ -202,16 +208,98 @@ function normalizeEventBonusPayload(rawPayload: unknown): BonusPayload | null {
         : `seed-${Math.random().toString(36).slice(2, 10)}`,
     precomputedOutcome: isRecord(envelope.precomputedOutcome) ? envelope.precomputedOutcome : {},
     expectedTotalAward: toInt(envelope.expectedTotalAward),
+    jackpotTiersHit: Array.isArray(envelope.jackpotTiersHit)
+      ? envelope.jackpotTiersHit.filter(
+          (tier): tier is JackpotTier =>
+            tier === "ember" || tier === "relic" || tier === "mythic" || tier === "throne"
+        )
+      : jackpotAwards.map((award) => award.tier),
     jackpotAwards
+  };
+}
+
+interface RuntimeDerivedState {
+  runtimeCapabilities: RuntimeCapabilities;
+  runtimeSummary: string;
+  queueSummary: string;
+  queuedSpins: number;
+  strandedQueuedSpins: number;
+}
+
+function resolveCurrentRuntimeCapabilities(): RuntimeCapabilities {
+  return resolveRuntimeCapabilities({ apiMode: apiClient.mode });
+}
+
+function describeRuntimeSummary(
+  runtimeCapabilities: RuntimeCapabilities,
+  eventStreamState: EventStreamState
+): string {
+  if (runtimeCapabilities.experience === "connected") {
+    if (eventStreamState === "idle") {
+      return "Connected runtime: server-authoritative spins are active, and live events are available when the stream confirms.";
+    }
+
+    if (eventStreamState === "disconnected") {
+      return "Connected runtime: server-authoritative spins are active while live events reconnect.";
+    }
+
+    return "Connected runtime: server-authoritative spins, live events, and queue replay are active.";
+  }
+
+  if (runtimeCapabilities.experience === "disconnected") {
+    return "Disconnected runtime: cached profile data is visible, but spins queue for server replay until the API returns.";
+  }
+
+  return "Demo runtime: spins resolve locally, and live sync or queue replay are unavailable.";
+}
+
+function describeQueueSummary(runtimeCapabilities: RuntimeCapabilities): string {
+  const snapshot = getOfflineSpinQueueSnapshot();
+
+  if (snapshot.queued > 0) {
+    if (runtimeCapabilities.offlineQueue.canReplayNow) {
+      return `${snapshot.queued} queued spin(s) are pending server replay.`;
+    }
+
+    if (runtimeCapabilities.offlineQueue.supported) {
+      return `${snapshot.queued} queued spin(s) are waiting for the connected runtime to return.`;
+    }
+
+    return `${snapshot.queued} queued server spin(s) are parked locally because demo runtime cannot replay them.`;
+  }
+
+  if (snapshot.stranded > 0) {
+    return `${snapshot.stranded} legacy queue item(s) are ambiguous and remain local-only.`;
+  }
+
+  if (runtimeCapabilities.offlineQueue.supported) {
+    return "Offline queue is ready for server replay if the connection drops.";
+  }
+
+  return "Offline queue is disabled in demo runtime.";
+}
+
+function buildRuntimeDerivedState(eventStreamState: EventStreamState): RuntimeDerivedState {
+  const runtimeCapabilities = resolveCurrentRuntimeCapabilities();
+  const snapshot = getOfflineSpinQueueSnapshot();
+
+  return {
+    runtimeCapabilities,
+    runtimeSummary: describeRuntimeSummary(runtimeCapabilities, eventStreamState),
+    queueSummary: describeQueueSummary(runtimeCapabilities),
+    queuedSpins: snapshot.queued,
+    strandedQueuedSpins: snapshot.stranded
   };
 }
 
 function applySpinToState(
   result: SpinResponse,
   set: (partial: Partial<GameStore>) => void,
-  get: () => GameStore
+  get: () => GameStore,
+  error?: string
 ): void {
   const current = get();
+  const runtimeState = buildRuntimeDerivedState(current.eventStreamState);
 
   const emberTriggered =
     result.triggers.includes("EMBER_RESPIN") || result.triggers.includes("EMBER_LOCK");
@@ -253,7 +341,8 @@ function applySpinToState(
     bonusSessions: nextSessions,
     progression: nextProgression,
     apiMode: apiClient.mode,
-    error: undefined
+    ...runtimeState,
+    error
   });
 }
 
@@ -261,6 +350,10 @@ export interface GameStore {
   sessionId: string;
   profile: ProfileResponse | null;
   config: ConfigResponse | null;
+  runtimeCapabilities: RuntimeCapabilities;
+  runtimeSummary: string;
+  queueSummary: string;
+  eventStreamState: EventStreamState;
   wallet: WalletState;
   jackpotLadder: JackpotLadder;
   emberLock: EmberLockStatus;
@@ -273,6 +366,7 @@ export interface GameStore {
   spinning: boolean;
   online: boolean;
   queuedSpins: number;
+  strandedQueuedSpins: number;
   apiMode: "remote" | "fallback";
   activeBonus: ActiveBonusPresentation | null;
   bonusSessions: ActiveBonusPresentation[];
@@ -287,10 +381,20 @@ export interface GameStore {
   consumeServerEvent: (event: ServerEvent) => void;
 }
 
+const initialRuntimeCapabilities = resolveCurrentRuntimeCapabilities();
+const initialEventStreamState: EventStreamState = initialRuntimeCapabilities.network.supportsLiveEvents
+  ? "idle"
+  : "unavailable";
+const initialRuntimeState = buildRuntimeDerivedState(initialEventStreamState);
+
 export const useGameStore = create<GameStore>((set, get) => ({
   sessionId: randomSessionId(),
   profile: null,
   config: null,
+  runtimeCapabilities: initialRuntimeState.runtimeCapabilities,
+  runtimeSummary: initialRuntimeState.runtimeSummary,
+  queueSummary: initialRuntimeState.queueSummary,
+  eventStreamState: initialEventStreamState,
   wallet: DEFAULT_WALLET,
   jackpotLadder: DEFAULT_JACKPOT,
   emberLock: DEFAULT_EMBER_LOCK,
@@ -302,7 +406,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   bet: 25,
   spinning: false,
   online: getOnlineStatus(),
-  queuedSpins: loadOfflineSpinQueue().length,
+  queuedSpins: initialRuntimeState.queuedSpins,
+  strandedQueuedSpins: initialRuntimeState.strandedQueuedSpins,
   apiMode: apiClient.mode,
   activeBonus: null,
   bonusSessions: [],
@@ -311,6 +416,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   bootstrap: async () => {
     try {
       const [profile, config] = await Promise.all([apiClient.getProfile(), apiClient.getConfig()]);
+      const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
       set({
         profile,
         config,
@@ -318,14 +424,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
         jackpotLadder: config.jackpotLadder,
         bet: config.defaultBet,
         online: getOnlineStatus(),
-        queuedSpins: loadOfflineSpinQueue().length,
         apiMode: apiClient.mode,
-        error: undefined
+        ...runtimeState,
+        error:
+          runtimeState.runtimeCapabilities.experience === "disconnected"
+            ? "Connected runtime unavailable. Spins will queue for server replay until the API returns."
+            : undefined
       });
     } catch {
+      const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
       set({
         online: getOnlineStatus(),
-        error: "Failed to load profile/config. Running in local fallback mode."
+        apiMode: apiClient.mode,
+        ...runtimeState,
+        error: "Failed to load profile/config."
       });
     }
   },
@@ -345,53 +457,125 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set({ spinning: true, online, error: undefined });
 
+    const runtimeCapabilities = resolveCurrentRuntimeCapabilities();
+
+    if (runtimeCapabilities.experience === "demo") {
+      try {
+        const result = await apiClient.spin(request);
+        applySpinToState(result, set, get);
+      } finally {
+        const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+        set({
+          spinning: false,
+          online,
+          apiMode: apiClient.mode,
+          ...runtimeState
+        });
+      }
+
+      return;
+    }
+
     if (!online) {
-      const queue = enqueueOfflineSpin(request);
+      enqueueOfflineSpin(request);
+
+      const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
       set({
         spinning: false,
-        queuedSpins: queue.length,
-        error: "Offline: spin queued and will sync when connection returns."
+        online: false,
+        apiMode: apiClient.mode,
+        ...runtimeState,
+        error: "Offline: spin queued for server replay when the connected runtime returns."
       });
       return;
     }
 
     try {
       await get().syncOfflineQueue();
-      const result = await apiClient.spin(request);
+      const result = await apiClient.spin(request, { policy: "require-remote" });
       applySpinToState(result, set, get);
-    } catch {
-      const queue = enqueueOfflineSpin(request);
-      set({
-        error: "Spin failed. Request queued for retry.",
-        queuedSpins: queue.length
-      });
+    } catch (error) {
+      if (error instanceof RemoteAuthoritativeUnavailableError) {
+        enqueueOfflineSpin(request);
+        const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+
+        set({
+          online: getOnlineStatus(),
+          apiMode: apiClient.mode,
+          ...runtimeState,
+          error: "Connected runtime unavailable. Spin queued for server replay."
+        });
+      } else {
+        const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+        set({
+          online: getOnlineStatus(),
+          apiMode: apiClient.mode,
+          ...runtimeState,
+          error: "Spin failed."
+        });
+      }
     } finally {
-      set({ spinning: false, apiMode: apiClient.mode });
+      const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+      set({
+        spinning: false,
+        online: getOnlineStatus(),
+        apiMode: apiClient.mode,
+        ...runtimeState
+      });
     }
   },
 
   syncOfflineQueue: async () => {
     const online = getOnlineStatus();
     if (!online) {
-      set({ online: false });
+      const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+      set({ online: false, apiMode: apiClient.mode, ...runtimeState });
       return;
     }
 
-    const drainResult = await drainOfflineSpinQueue((request) => apiClient.spin(request));
+    const runtimeCapabilities = resolveCurrentRuntimeCapabilities();
+    if (!runtimeCapabilities.offlineQueue.supported) {
+      const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+      set({ online: true, apiMode: apiClient.mode, ...runtimeState });
+      return;
+    }
 
-    set({
-      queuedSpins: drainResult.remaining,
-      online: true,
-      apiMode: apiClient.mode
-    });
+    const drainResult = await drainOfflineSpinQueue((request) =>
+      apiClient.spin(request, { policy: "require-remote" })
+    );
+
+    const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
 
     if (drainResult.lastResult) {
-      applySpinToState(drainResult.lastResult, set, get);
+      applySpinToState(
+        drainResult.lastResult,
+        set,
+        get,
+        drainResult.failed > 0
+          ? "Connected runtime unavailable. Remaining spins are still queued for replay."
+          : drainResult.stranded > 0
+            ? "Some legacy queued spins remain local-only."
+            : undefined
+      );
+      return;
     }
+
+    set({
+      online: true,
+      apiMode: apiClient.mode,
+      ...runtimeState,
+      error:
+        drainResult.failed > 0
+          ? "Connected runtime unavailable. Remaining spins are still queued for replay."
+          : drainResult.stranded > 0
+            ? "Some legacy queued spins remain local-only."
+            : undefined
+    });
   },
 
   setOnlineStatus: (online) => {
-    set({ online });
+    const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+    set({ online, apiMode: apiClient.mode, ...runtimeState });
   },
 
   setBet: (value) => {
@@ -412,7 +596,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   consumeServerEvent: (event) => {
-    if (event.type === "jackpot") {
+    if (event.type === "runtime.connected" || event.type === "connected") {
+      const runtimeState = buildRuntimeDerivedState("connected");
+      set({ eventStreamState: "connected", ...runtimeState });
+      return;
+    }
+
+    if (event.type === "runtime.disconnected") {
+      const runtimeState = buildRuntimeDerivedState("disconnected");
+      set({ eventStreamState: "disconnected", ...runtimeState });
+      return;
+    }
+
+    if (event.type === "runtime.unavailable") {
+      const runtimeState = buildRuntimeDerivedState("unavailable");
+      set({ eventStreamState: "unavailable", ...runtimeState });
+      return;
+    }
+
+    if (event.type === "runtime.ping" || event.type === "ping") {
+      return;
+    }
+
+    if (event.type === "jackpot" || event.type === "jackpot.hit") {
       const payload = event.payload as { tier?: JackpotTier; amount?: number };
       const tier = payload.tier;
       const amount = payload.amount;

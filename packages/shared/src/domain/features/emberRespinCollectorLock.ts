@@ -2,10 +2,14 @@ import { createSeededRng } from "../rng";
 import { JACKPOT_TIERS, type JackpotTier } from "./emberLock";
 import type {
   EmberRespinCollectorLockSession as EmberRespinCollectorLockSessionContract,
-  EmberRespinJackpotOrbHit as EmberRespinJackpotOrbHitContract
+  EmberRespinJackpotOrbHit as EmberRespinJackpotOrbHitContract,
+  EmberRespinRevealStep as EmberRespinRevealStepContract,
+  OrbLanding as OrbLandingContract
 } from "../../contracts/api";
 
 export type EmberRespinJackpotOrbHit = EmberRespinJackpotOrbHitContract;
+export type EmberRespinRevealStep = EmberRespinRevealStepContract;
+export type OrbLanding = OrbLandingContract;
 
 export type EmberRespinCollectorLockSession = EmberRespinCollectorLockSessionContract;
 export type EmberRespinSession = EmberRespinCollectorLockSession;
@@ -67,6 +71,7 @@ export function resolveEmberRespinCollectorLock(
 
   const rng = createSeededRng(`${input.seed}:ember-respin`);
   const lockedCellSet = new Set(uniqueSortedCells(input.initialLockedCells));
+  const jackpotTierByCell = new Map<number, JackpotTier>();
 
   while (lockedCellSet.size < 6) {
     lockedCellSet.add(rng.nextInt(GRID_SIZE));
@@ -75,32 +80,58 @@ export function resolveEmberRespinCollectorLock(
   const orbValueByCell = new Map<number, number>();
   const jackpotOrbHits: EmberRespinJackpotOrbHit[] = [];
 
-  const addOrbAtCell = (cell: number): void => {
+  const addOrbAtCell = (cell: number): OrbLanding | null => {
     if (orbValueByCell.has(cell)) {
-      return;
+      return null;
     }
 
     const orbValue = roundCoins(Math.max(1, input.bet * (0.45 + rng.nextFloat() * 2.25)));
     orbValueByCell.set(cell, orbValue);
 
+     const landing: OrbLanding = {
+      position: cell,
+      coinValue: orbValue
+    };
+
     const jackpotTier = rollJackpotTier(rng.nextFloat());
     if (jackpotTier) {
       jackpotOrbHits.push({ cell, tier: jackpotTier });
+      jackpotTierByCell.set(cell, jackpotTier);
+      landing.jackpotTier = jackpotTier;
     }
+
+    return landing;
   };
 
   for (const cell of lockedCellSet) {
     addOrbAtCell(cell);
   }
 
+  const initialLockedCells = [...lockedCellSet].sort((left, right) => left - right);
+  const startingOrbs = initialLockedCells.map((cell) => {
+    const landing: OrbLanding = {
+      position: cell,
+      coinValue: orbValueByCell.get(cell) ?? 0
+    };
+
+    const jackpotTier = jackpotTierByCell.get(cell);
+    if (jackpotTier) {
+      landing.jackpotTier = jackpotTier;
+    }
+
+    return landing;
+  });
+
   let collectorMultiplier = 1;
   let respinsRemaining = STARTING_RESPINS;
   let respinsPlayed = 0;
   const guaranteedMysteryOrbAt = 2 + rng.nextInt(2);
+  const steps: EmberRespinRevealStep[] = [];
 
   while (respinsRemaining > 0 && lockedCellSet.size < GRID_SIZE) {
     respinsPlayed += 1;
     let landedNewOrb = false;
+    const landedOrbs: OrbLanding[] = [];
 
     for (let cell = 0; cell < GRID_SIZE; cell += 1) {
       if (lockedCellSet.has(cell)) {
@@ -109,7 +140,10 @@ export function resolveEmberRespinCollectorLock(
 
       if (rng.chance(0.16)) {
         lockedCellSet.add(cell);
-        addOrbAtCell(cell);
+        const landing = addOrbAtCell(cell);
+        if (landing) {
+          landedOrbs.push(landing);
+        }
         landedNewOrb = true;
       }
     }
@@ -125,7 +159,10 @@ export function resolveEmberRespinCollectorLock(
       if (openCells.length > 0) {
         const forcedCell = openCells[rng.nextInt(openCells.length)] as number;
         lockedCellSet.add(forcedCell);
-        addOrbAtCell(forcedCell);
+        const landing = addOrbAtCell(forcedCell);
+        if (landing) {
+          landedOrbs.push(landing);
+        }
         landedNewOrb = true;
       }
     }
@@ -135,6 +172,14 @@ export function resolveEmberRespinCollectorLock(
     }
 
     respinsRemaining = landedNewOrb ? STARTING_RESPINS : Math.max(0, respinsRemaining - 1);
+
+    steps.push({
+      respinIndex: respinsPlayed,
+      landedOrbs: landedOrbs.sort((left, right) => left.position - right.position),
+      collectorMultiplier,
+      respinsRemainingAfter: respinsRemaining,
+      boardCompleted: lockedCellSet.size === GRID_SIZE
+    });
   }
 
   const lockedCells = [...lockedCellSet].sort((left, right) => left - right);
@@ -142,7 +187,9 @@ export function resolveEmberRespinCollectorLock(
   const orbValueTotal = orbValues.reduce((sum, value) => sum + value, 0);
 
   return {
-    type: "EMBER_RESPIN_COLLECTOR_LOCK",
+    type: "EMBER_RESPIN",
+    startingOrbs,
+    steps,
     lockedCells,
     orbValues,
     respinsRemaining,

@@ -2,6 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import {
+  collectBonusSessionJackpotTiers,
+  resolveCelestialWheelAscension,
+  resolveEmberRespinCollectorLock,
+  resolveRelicVaultPick,
+  type BonusJackpotAward as SharedBonusJackpotAward,
+  type BonusPayload as SharedBonusPayload,
+  type BonusSessionReference,
+  type BonusType as SharedBonusType,
+  type OrbLanding,
+} from "@ember-thrones/shared";
+import { buildBonusSessionSeed } from "../lib/bonusSessions.js";
 import { type JackpotTier, type VolatilityPreset, type WalletState } from "../lib/db.js";
 import { signPayload } from "../lib/signature.js";
 import { createDefaultProfile } from "../seeds/defaultProfile.js";
@@ -31,7 +43,6 @@ type SymbolCode =
   | "DRAGON";
 
 type WinKind = "line" | "feature" | "jackpot";
-type BonusType = "EMBER_RESPIN" | "WHEEL_ASCENSION" | "RELIC_VAULT";
 
 export interface TriggerFlags {
   emberRespin: boolean;
@@ -40,20 +51,9 @@ export interface TriggerFlags {
   freeQuest: boolean;
 }
 
-export interface BonusJackpotAward {
-  tier: JackpotTier;
-  amount: number;
-  source: string;
-}
+export type BonusJackpotAward = SharedBonusJackpotAward;
 
-export interface SpinBonusPayload {
-  type: BonusType;
-  sessionId: string;
-  revealSeed: string;
-  precomputedOutcome: Record<string, unknown>;
-  expectedTotalAward: number;
-  jackpotAwards: BonusJackpotAward[];
-}
+export type SpinBonusPayload = SharedBonusPayload;
 
 export interface SpinWin {
   kind: WinKind;
@@ -105,6 +105,7 @@ export interface SpinResult {
   triggers: SpinTriggers;
   triggerFlags: TriggerFlags;
   bonusState: SpinBonusState;
+  bonusSessionRef: BonusSessionReference | null;
   bonusPayload: SpinBonusPayload | null;
   totalWin: number;
   updatedWallet: WalletState;
@@ -241,7 +242,7 @@ const deriveTriggerFlags = (analysis: ReelAnalysis): TriggerFlags => {
   };
 };
 
-const selectPrimaryBonusType = (triggerFlags: TriggerFlags): BonusType | null => {
+const selectPrimaryBonusType = (triggerFlags: TriggerFlags): SharedBonusType | null => {
   if (triggerFlags.emberRespin) {
     return "EMBER_RESPIN";
   }
@@ -251,7 +252,7 @@ const selectPrimaryBonusType = (triggerFlags: TriggerFlags): BonusType | null =>
   }
 
   if (triggerFlags.relicVaultPick) {
-    return "RELIC_VAULT";
+    return "RELIC_VAULT_PICK";
   }
 
   return null;
@@ -259,7 +260,7 @@ const selectPrimaryBonusType = (triggerFlags: TriggerFlags): BonusType | null =>
 
 const buildRevealSeed = (
   input: SharedSpinInput,
-  bonusType: BonusType,
+  bonusType: SharedBonusType,
   flattenedReels: SymbolCode[],
 ): string => {
   return createHash("sha256")
@@ -419,7 +420,6 @@ const evaluateLineWins = (reels: SymbolCode[][], bet: number): SpinWin[] => {
 
 interface EmberRespinBuild {
   payload: SpinBonusPayload;
-  featureWin: SpinWin | null;
   legacyState: NonNullable<SpinBonusState["emberLock"]>;
 }
 
@@ -428,76 +428,41 @@ const buildEmberRespinPayload = (
   analysis: ReelAnalysis,
   revealSeed: string,
 ): EmberRespinBuild => {
-  const rng = new SeededRng(`${revealSeed}|resolve`);
-  const lockedCells = analysis.orbPositions.slice();
-  const orbValues = lockedCells.map(() => Math.max(1, Math.floor((1 + rng.next() * 4.5) * input.bet)));
-  const collectorMultiplier = rng.next() < 0.32 ? 2 + Math.floor(rng.next() * 2) : 1;
-  const guaranteedMysteryOrbAt = rng.next() < 0.45 ? 1 + Math.floor(rng.next() * 3) : null;
-
-  const jackpotOrbHits: Array<{ cell: number; tier: JackpotTier }> = [];
-  for (const cell of lockedCells) {
-    if (rng.next() < 0.065) {
-      jackpotOrbHits.push({
-        cell,
-        tier: pickJackpotTier(rng),
-      });
-    }
-  }
-
-  if (jackpotOrbHits.length === 0 && lockedCells.length >= 8 && rng.next() < 0.12) {
-    const forcedCell = pickFromList(lockedCells, rng, 0);
-    jackpotOrbHits.push({
-      cell: forcedCell,
-      tier: pickJackpotTier(rng),
-    });
-  }
-
-  const valueSum = orbValues.reduce((sum, value) => sum + value, 0);
-  const finalAward = Math.max(0, Math.floor(valueSum * (0.35 + rng.next() * 0.35) * collectorMultiplier));
-
-  const jackpotAwards = dedupeJackpotAwards(
-    jackpotOrbHits.map((hit) => ({
-      tier: hit.tier,
+  const outcome = resolveEmberRespinCollectorLock({
+    seed: revealSeed,
+    bet: input.bet,
+    initialLockedCells: analysis.orbPositions,
+  });
+  const jackpotTiersHit: JackpotTier[] = collectBonusSessionJackpotTiers(outcome);
+  const jackpotAwards: BonusJackpotAward[] = dedupeJackpotAwards(
+    jackpotTiersHit.map((tier: JackpotTier) => ({
+      tier,
       amount: 0,
-      source: "ember_orb",
-    })),
+      source: "ember_respin",
+    }))
   );
 
   const jackpotFlags: Partial<Record<JackpotTier, boolean>> = {};
   for (const award of jackpotAwards) {
-    jackpotFlags[award.tier] = true;
+    const tier = award.tier as JackpotTier;
+    jackpotFlags[tier] = true;
   }
 
   return {
     payload: {
-      type: "EMBER_RESPIN",
+      type: outcome.type,
       sessionId: input.sessionId,
       revealSeed,
-      precomputedOutcome: {
-        lockedCells,
-        orbValues,
-        respinsRemaining: 3,
-        collectorMultiplier,
-        guaranteedMysteryOrbAt,
-        jackpotOrbHits,
-        finalAward,
-      },
-      expectedTotalAward: finalAward,
+      expectedTotalAward: outcome.finalAward,
+      jackpotTiersHit,
       jackpotAwards,
+      precomputedOutcome: outcome,
     },
-    featureWin:
-      finalAward > 0
-        ? {
-            kind: "feature",
-            amount: finalAward,
-            detail: "Ember Respin trigger award",
-          }
-        : null,
     legacyState: {
       active: true,
-      lockedCells,
+      lockedCells: outcome.startingOrbs.map((orb: OrbLanding) => orb.position),
       respinsRemaining: 3,
-      orbValues,
+      orbValues: outcome.startingOrbs.map((orb: OrbLanding) => orb.coinValue),
       jackpotFlags,
     },
   };
@@ -505,130 +470,47 @@ const buildEmberRespinPayload = (
 
 interface WheelAscensionBuild {
   payload: SpinBonusPayload;
-  featureWin: SpinWin | null;
   state: NonNullable<SpinBonusState["wheelAscension"]>;
 }
-
-const WHEEL_WEDGE_MAP: Array<{
-  wedgeId: string;
-  kind: "coin" | "multiplier" | "jackpot" | "respin";
-  value: number | string;
-}> = [
-  { wedgeId: "coin_1", kind: "coin", value: 1 },
-  { wedgeId: "coin_2", kind: "coin", value: 2 },
-  { wedgeId: "coin_3", kind: "coin", value: 3 },
-  { wedgeId: "coin_4", kind: "coin", value: 5 },
-  { wedgeId: "mult_2", kind: "multiplier", value: 2 },
-  { wedgeId: "mult_3", kind: "multiplier", value: 3 },
-  { wedgeId: "mult_5", kind: "multiplier", value: 5 },
-  { wedgeId: "respin_1", kind: "respin", value: 1 },
-  { wedgeId: "respin_2", kind: "respin", value: 1 },
-  { wedgeId: "jackpot_ember", kind: "jackpot", value: "ember" },
-  { wedgeId: "jackpot_relic", kind: "jackpot", value: "relic" },
-  { wedgeId: "jackpot_mythic", kind: "jackpot", value: "mythic" },
-];
 
 const buildWheelAscensionPayload = (
   input: SharedSpinInput,
   revealSeed: string,
 ): WheelAscensionBuild => {
-  const rng = new SeededRng(`${revealSeed}|resolve`);
-  const maxSpins = 6;
-  let awardedSpins = 1 + Math.floor(rng.next() * 3);
-  let spinCounter = 0;
-  let finalAward = 0;
-
-  const outcomesBySpin: Array<{ wedgeId: string; resolvedAward: number; jackpotTier?: JackpotTier }> = [];
-  const jackpotAwards: BonusJackpotAward[] = [];
-
-  while (spinCounter < awardedSpins && spinCounter < maxSpins) {
-    spinCounter += 1;
-    const roll = rng.next();
-
-    if (roll < 0.54) {
-      const value = Math.max(1, Math.floor((1 + rng.next() * 6) * input.bet));
-      finalAward += value;
-      outcomesBySpin.push({
-        wedgeId: `coin_${spinCounter}`,
-        resolvedAward: value,
-      });
-      continue;
-    }
-
-    if (roll < 0.78) {
-      const multiplier = 2 + Math.floor(rng.next() * 4);
-      const value = Math.max(1, Math.floor(input.bet * multiplier * (0.8 + rng.next() * 0.6)));
-      finalAward += value;
-      outcomesBySpin.push({
-        wedgeId: `mult_${multiplier}_${spinCounter}`,
-        resolvedAward: value,
-      });
-      continue;
-    }
-
-    if (roll < 0.9 && awardedSpins < maxSpins) {
-      awardedSpins = Math.min(maxSpins, awardedSpins + 1);
-      outcomesBySpin.push({
-        wedgeId: `respin_${spinCounter}`,
-        resolvedAward: 0,
-      });
-      continue;
-    }
-
-    const jackpotTier = pickJackpotTier(rng);
-    jackpotAwards.push({
-      tier: jackpotTier,
+  const outcome = resolveCelestialWheelAscension({
+    seed: revealSeed,
+    bet: input.bet,
+  });
+  const jackpotTiersHit: JackpotTier[] = collectBonusSessionJackpotTiers(outcome);
+  const jackpotAwards: BonusJackpotAward[] = dedupeJackpotAwards(
+    jackpotTiersHit.map((tier: JackpotTier) => ({
+      tier,
       amount: 0,
-      source: "wheel_wedge",
-    });
-    outcomesBySpin.push({
-      wedgeId: `jackpot_${jackpotTier}_${spinCounter}`,
-      resolvedAward: 0,
-      jackpotTier,
-    });
-  }
+      source: "wheel_ascension",
+    }))
+  );
 
   return {
     payload: {
-      type: "WHEEL_ASCENSION",
+      type: outcome.type,
       sessionId: input.sessionId,
       revealSeed,
-      precomputedOutcome: {
-        wedgeMap: WHEEL_WEDGE_MAP,
-        awardedSpins,
-        maxSpins,
-        outcomesBySpin,
-        finalAward,
-      },
-      expectedTotalAward: finalAward,
-      jackpotAwards: dedupeJackpotAwards(jackpotAwards),
+      expectedTotalAward: outcome.finalAward,
+      jackpotTiersHit,
+      jackpotAwards,
+      precomputedOutcome: outcome,
     },
-    featureWin:
-      finalAward > 0
-        ? {
-            kind: "feature",
-            amount: finalAward,
-            detail: "Wheel Ascension trigger award",
-          }
-        : null,
     state: {
       active: true,
       currentSpin: 0,
-      awardedSpins,
-      maxSpins,
+      awardedSpins: outcome.awardedSpins,
+      maxSpins: outcome.maxSpins,
     },
   };
 };
 
-interface RelicBoardCell {
-  slotId: string;
-  hidden: "coin" | "multiplier" | "jackpotTier" | "bustShield";
-  jackpotTier?: JackpotTier;
-}
-
 interface RelicVaultBuild {
   payload: SpinBonusPayload;
-  featureWin: SpinWin | null;
   state: NonNullable<SpinBonusState["relicVault"]>;
 }
 
@@ -637,146 +519,36 @@ const buildRelicVaultPayload = (
   analysis: ReelAnalysis,
   revealSeed: string,
 ): RelicVaultBuild => {
-  const rng = new SeededRng(`${revealSeed}|resolve`);
   const keyCount = 3 + Math.min(2, Math.floor((analysis.dragonCount + analysis.wildCount) / 2));
-  const picksAllowed = keyCount;
-  const boardSize = 9;
-
-  const board: RelicBoardCell[] = Array.from({ length: boardSize }, (_, index) => {
-    const roll = rng.next();
-
-    if (roll < 0.5) {
-      return {
-        slotId: `slot_${index + 1}`,
-        hidden: "coin",
-      };
-    }
-
-    if (roll < 0.72) {
-      return {
-        slotId: `slot_${index + 1}`,
-        hidden: "multiplier",
-      };
-    }
-
-    if (roll < 0.9) {
-      return {
-        slotId: `slot_${index + 1}`,
-        hidden: "jackpotTier",
-        jackpotTier: pickFromList(JACKPOT_TIERS, rng, "ember"),
-      };
-    }
-
-    return {
-      slotId: `slot_${index + 1}`,
-      hidden: "bustShield",
-    };
+  const outcome = resolveRelicVaultPick({
+    seed: revealSeed,
+    bet: input.bet,
+    keyCount,
   });
-
-  const remaining = board.map((_, index) => index);
-  const revealed: string[] = [];
-  const jackpotCounts: Record<JackpotTier, number> = {
-    ember: 0,
-    relic: 0,
-    mythic: 0,
-    throne: 0,
-  };
-
-  let finalAward = 0;
-
-  for (let pick = 0; pick < picksAllowed && remaining.length > 0; pick += 1) {
-    let choiceIndex = Math.floor(rng.next() * remaining.length);
-
-    if (pick === 0) {
-      const nonShieldIndices = remaining.filter((index) => {
-        return (board[index]?.hidden ?? "coin") !== "bustShield";
-      });
-
-      if (nonShieldIndices.length > 0) {
-        const target = pickFromList(nonShieldIndices, rng, nonShieldIndices[0] ?? 0);
-        const found = remaining.indexOf(target);
-        choiceIndex = found >= 0 ? found : 0;
-      }
-    }
-
-    const boardIndex = remaining.splice(choiceIndex, 1)[0] ?? 0;
-    const cell = board[boardIndex] ?? {
-      slotId: `slot_${boardIndex + 1}`,
-      hidden: "coin" as const,
-    };
-
-    revealed.push(cell.slotId);
-
-    if (cell.hidden === "coin") {
-      finalAward += Math.max(1, Math.floor((0.8 + rng.next() * 4.2) * input.bet));
-      continue;
-    }
-
-    if (cell.hidden === "multiplier") {
-      const multiplier = 2 + Math.floor(rng.next() * 3);
-      finalAward = Math.floor(Math.max(finalAward, input.bet) * multiplier);
-      continue;
-    }
-
-    if (cell.hidden === "bustShield") {
-      finalAward += Math.max(1, Math.floor(input.bet * 0.5));
-      continue;
-    }
-
-    const tier = cell.jackpotTier ?? "ember";
-    jackpotCounts[tier] += 1;
-  }
-
-  const jackpotAwards: BonusJackpotAward[] = [];
-  for (const tier of JACKPOT_TIERS) {
-    if (jackpotCounts[tier] >= 3) {
-      jackpotAwards.push({
-        tier,
-        amount: 0,
-        source: "relic_match",
-      });
-    }
-  }
-
-  if (jackpotAwards.length === 0 && analysis.dragonCount >= 4 && rng.next() < 0.08) {
-    jackpotAwards.push({
-      tier: pickJackpotTier(rng),
+  const jackpotTiersHit: JackpotTier[] = collectBonusSessionJackpotTiers(outcome);
+  const jackpotAwards: BonusJackpotAward[] = dedupeJackpotAwards(
+    jackpotTiersHit.map((tier: JackpotTier) => ({
+      tier,
       amount: 0,
-      source: "relic_rare",
-    });
-  }
+      source: "relic_vault",
+    }))
+  );
 
   return {
     payload: {
-      type: "RELIC_VAULT",
+      type: outcome.type,
       sessionId: input.sessionId,
       revealSeed,
-      precomputedOutcome: {
-        keyCount,
-        board,
-        picksAllowed,
-        picksMade: revealed.length,
-        revealed,
-        guaranteedNonBustFirstPick: true,
-        jackpotEmblemCounts: jackpotCounts,
-        finalAward,
-      },
-      expectedTotalAward: finalAward,
-      jackpotAwards: dedupeJackpotAwards(jackpotAwards),
+      expectedTotalAward: outcome.finalAward,
+      jackpotTiersHit,
+      jackpotAwards,
+      precomputedOutcome: outcome,
     },
-    featureWin:
-      finalAward > 0
-        ? {
-            kind: "feature",
-            amount: finalAward,
-            detail: "Relic Vault trigger award",
-          }
-        : null,
     state: {
       active: true,
-      keys: keyCount,
-      picksRemaining: Math.max(0, keyCount - revealed.length),
-      revealed,
+      keys: outcome.keyCount,
+      picksRemaining: outcome.picksAllowed,
+      revealed: [],
     },
   };
 };
@@ -829,27 +601,18 @@ const computeOutcomeFromResolvedReels = (
       const emberResult = buildEmberRespinPayload(input, analysis, revealSeed);
       bonusPayload = emberResult.payload;
       bonusState.emberLock = emberResult.legacyState;
-      if (emberResult.featureWin) {
-        wins.push(emberResult.featureWin);
-      }
     }
 
     if (selectedBonusType === "WHEEL_ASCENSION") {
       const wheelResult = buildWheelAscensionPayload(input, revealSeed);
       bonusPayload = wheelResult.payload;
       bonusState.wheelAscension = wheelResult.state;
-      if (wheelResult.featureWin) {
-        wins.push(wheelResult.featureWin);
-      }
     }
 
-    if (selectedBonusType === "RELIC_VAULT") {
+    if (selectedBonusType === "RELIC_VAULT_PICK") {
       const relicResult = buildRelicVaultPayload(input, analysis, revealSeed);
       bonusPayload = relicResult.payload;
       bonusState.relicVault = relicResult.state;
-      if (relicResult.featureWin) {
-        wins.push(relicResult.featureWin);
-      }
     }
   }
 
@@ -1076,30 +839,27 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
       featureFlags: body.featureFlags ?? {},
     });
 
+    const spinId = randomUUID();
     const jackpotSnapshotBefore = toJackpotSnapshot(app.db.getJackpots());
     const wins: SpinWin[] = outcome.wins.filter((win) => win.kind !== "jackpot");
     let totalWin = wins.reduce((sum, win) => sum + win.amount, 0);
 
     const jackpotPayoutTierSet = new Set<JackpotTier>();
     let bonusPayload: SpinBonusPayload | null = null;
+    let bonusSessionRef: BonusSessionReference | null = null;
+    let reservedBonusSession: ReturnType<typeof buildBonusSessionSeed> | null = null;
 
     if (outcome.bonusPayload) {
       const resolvedJackpotAwards = dedupeJackpotAwards(
-        outcome.bonusPayload.jackpotAwards.map((award) => ({
+        outcome.bonusPayload.jackpotAwards.map((award: BonusJackpotAward) => ({
           tier: award.tier,
-          amount: jackpotSnapshotBefore[award.tier],
+          amount: jackpotSnapshotBefore[award.tier as JackpotTier],
           source: award.source,
         })),
       );
 
       for (const award of resolvedJackpotAwards) {
         jackpotPayoutTierSet.add(award.tier);
-        totalWin += award.amount;
-        wins.push({
-          kind: "jackpot",
-          amount: award.amount,
-          detail: `${award.tier.toUpperCase()} jackpot payout (${award.source})`,
-        });
       }
 
       bonusPayload = {
@@ -1113,23 +873,27 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
           ),
         ),
       };
-    }
 
-    let legacyJackpotTier = outcome.triggers.jackpotTier;
-    if (!legacyJackpotTier && bonusPayload && bonusPayload.jackpotAwards.length > 0) {
-      legacyJackpotTier = bonusPayload.jackpotAwards[0]?.tier;
-    }
+      bonusSessionRef = {
+        id: randomUUID(),
+        type: bonusPayload.type,
+        status: "PENDING",
+      };
 
-    if (legacyJackpotTier && !jackpotPayoutTierSet.has(legacyJackpotTier)) {
-      const legacyJackpotAmount = jackpotSnapshotBefore[legacyJackpotTier];
-      jackpotPayoutTierSet.add(legacyJackpotTier);
-      totalWin += legacyJackpotAmount;
-      wins.push({
-        kind: "jackpot",
-        amount: legacyJackpotAmount,
-        detail: `${legacyJackpotTier.toUpperCase()} jackpot payout`,
+      reservedBonusSession = buildBonusSessionSeed({
+        id: bonusSessionRef.id,
+        spinId,
+        sessionId: session.id,
+        profileId: profile.id,
+        revealSeed: bonusPayload.revealSeed,
+        expectedTotalAward: bonusPayload.expectedTotalAward,
+        jackpotTiersHit: bonusPayload.jackpotTiersHit,
+        jackpotAwards: bonusPayload.jackpotAwards,
+        outcome: bonusPayload.precomputedOutcome,
       });
     }
+
+    const legacyJackpotTier = bonusPayload?.jackpotAwards[0]?.tier ?? outcome.triggers.jackpotTier;
 
     const jackpotSnapshotAfter = projectJackpotSnapshotAfter(
       jackpotSnapshotBefore,
@@ -1143,8 +907,6 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
       lifetimeSpins: walletBefore.lifetimeSpins + 1,
       lifetimeWins: walletBefore.lifetimeWins + totalWin,
     };
-
-    const spinId = randomUUID();
     const legacyTriggers: SpinTriggers = {
       emberLock: outcome.triggers.emberLock,
       freeQuest: outcome.triggers.freeQuest,
@@ -1162,7 +924,8 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
       triggers: legacyTriggers,
       triggerFlags: outcome.triggerFlags,
       bonusState: outcome.bonusState,
-      bonusPayload,
+      bonusSessionRef,
+      bonusPayload: null,
       totalWin,
       updatedWallet,
       jackpotSnapshotBefore,
@@ -1198,24 +961,27 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
         lastTriggers: response.triggers,
         lastTriggerFlags: response.triggerFlags,
         lastBonusState: response.bonusState,
-        lastBonusPayload: response.bonusPayload,
+        lastBonusSessionRef: response.bonusSessionRef,
+        activeBonusSessionRef: response.bonusSessionRef,
         lastJackpotSnapshotBefore: response.jackpotSnapshotBefore,
         lastJackpotSnapshotAfter: response.jackpotSnapshotAfter,
       },
       jackpotContributionBet: body.bet,
-      ...(legacyJackpotTier ? { jackpotPayoutTier: legacyJackpotTier } : {}),
       ...(jackpotPayoutTierSet.size > 0
         ? { jackpotPayoutTiers: Array.from(jackpotPayoutTierSet) }
         : {}),
+      ...(reservedBonusSession ? { bonusSession: reservedBonusSession } : {}),
     });
 
-    for (const tier of jackpotPayoutTierSet) {
-      app.eventBus.publish("jackpot", {
-        profileId: profile.id,
-        sessionId: session.id,
-        tier,
-        amount: jackpotSnapshotBefore[tier],
-      });
+    if (!bonusSessionRef) {
+      for (const tier of jackpotPayoutTierSet) {
+        app.eventBus.publish("jackpot", {
+          profileId: profile.id,
+          sessionId: session.id,
+          tier,
+          amount: jackpotSnapshotBefore[tier],
+        });
+      }
     }
 
     if (hasAnyTrigger(response.triggerFlags)) {
@@ -1224,7 +990,8 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
         sessionId: session.id,
         triggers: response.triggers,
         triggerFlags: response.triggerFlags,
-        bonusType: response.bonusPayload?.type ?? null,
+        bonusType: response.bonusSessionRef?.type ?? null,
+        bonusSessionRef: response.bonusSessionRef,
       });
     }
 

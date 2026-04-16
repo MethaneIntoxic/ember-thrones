@@ -6,16 +6,20 @@ export {
 	spinGridSchema,
 	lineWinSchema as contractLineWinSchema,
 	triggerFlagsSchema,
+	triggerFlagsInputSchema,
+	normalizedTriggerFlagsSchema,
 	orbLandingSchema as contractOrbLandingSchema,
 	emberLockStateSchema,
 	freeQuestStateSchema,
 	bonusTypeCanonicalSchema,
 	bonusTypeShortSchema,
 	bonusTypeInputSchema,
+	legacyBonusTypeSchema,
 	normalizedBonusTypeSchema,
 	bonusTypeSchema,
 	bonusJackpotAwardSchema,
 	emberRespinJackpotOrbHitSchema,
+	emberRespinRevealStepSchema,
 	emberRespinCollectorLockSessionSchema,
 	wheelWedgeKindSchema,
 	wheelWedgeSchema,
@@ -23,9 +27,25 @@ export {
 	celestialWheelAscensionSessionSchema,
 	relicVaultHiddenSchema,
 	relicVaultBoardSlotSchema,
+	relicVaultPickResultSchema,
 	relicVaultPickSessionSchema,
+	bonusOutcomeSchema,
 	bonusSessionSchema,
+	bonusSessionStatusSchema,
+	bonusActionTypeSchema,
+	bonusAdvanceActionTypeSchema,
+	emberRespinProgressSchema,
+	wheelAscensionProgressSchema,
+	relicVaultBoardStateSlotSchema,
+	relicVaultProgressSchema,
+	bonusProgressSchema,
+	bonusSessionReferenceSchema,
+	bonusSessionRecordSchema,
+	bonusActionRecordSchema,
+	bonusSessionSnapshotSchema,
+	bonusSessionActionRequestSchema,
 	bonusPayloadSchema,
+	normalizeTriggerFlags,
 	normalizeBonusType,
 	toShortBonusType,
 	collectBonusSessionJackpotTiers,
@@ -40,15 +60,18 @@ export type {
 	VolatilityProfile,
 	SlotSymbol as ContractSlotSymbol,
 	LineWin as ContractLineWin,
+	TriggerFlagsInput,
 	TriggerFlags,
 	OrbLanding as ContractOrbLanding,
 	EmberLockStateContract,
 	FreeQuestStateContract,
 	BonusTypeInput,
+	LegacyBonusType,
 	BonusTypeShort,
 	BonusType,
 	BonusJackpotAward,
 	EmberRespinJackpotOrbHit,
+	EmberRespinRevealStep,
 	EmberRespinCollectorLockSession,
 	WheelWedgeKind,
 	WheelWedge,
@@ -56,8 +79,23 @@ export type {
 	CelestialWheelAscensionSession,
 	RelicVaultHidden,
 	RelicVaultBoardSlot,
+	RelicVaultPickResult,
 	RelicVaultPickSession,
+	BonusOutcome,
 	BonusSession,
+	BonusSessionStatus,
+	BonusActionType,
+	BonusAdvanceActionType,
+	EmberRespinProgress,
+	WheelAscensionProgress,
+	RelicVaultBoardStateSlot,
+	RelicVaultProgress,
+	BonusProgress,
+	BonusSessionReference,
+	BonusSessionRecord,
+	BonusActionRecord,
+	BonusSessionSnapshot,
+	BonusSessionActionRequest,
 	BonusPayload,
 	SpinRequest,
 	SpinResult,
@@ -69,9 +107,32 @@ export * from "./domain/rng";
 export * from "./domain/reels";
 export * from "./domain/payout";
 export * from "./domain/features/emberLock";
-export * from "./domain/features/emberRespinCollectorLock";
+export {
+	resolveEmberRespinCollectorLock,
+	resolveEmberRespin,
+	summarizeEmberJackpotHits
+} from "./domain/features/emberRespinCollectorLock";
+export type {
+	ResolveEmberRespinCollectorLockInput,
+	ResolveEmberRespinInput
+} from "./domain/features/emberRespinCollectorLock";
 export * from "./domain/features/freeQuest";
-export * from "./domain/features/celestialWheelAscension";
-export * from "./domain/features/relicVaultPick";
+export {
+	resolveCelestialWheelAscension,
+	resolveWheelAscension
+} from "./domain/features/celestialWheelAscension";
+export type {
+	ResolveCelestialWheelAscensionInput,
+	ResolveWheelAscensionInput
+} from "./domain/features/celestialWheelAscension";
+export {
+	resolveRelicVaultPick,
+	resolveVaultPick
+} from "./domain/features/relicVaultPick";
+export type {
+	ResolveRelicVaultPickInput,
+	ResolveVaultPickInput
+} from "./domain/features/relicVaultPick";
+export * from "./domain/features/bonusSession";
 export * from "./domain/sim/reportSchema";
 export * from "./domain/sim/simulator";

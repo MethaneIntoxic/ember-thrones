@@ -3,12 +3,14 @@ import type { JackpotTier } from "./emberLock";
 import type {
   RelicVaultBoardSlot as RelicVaultBoardSlotContract,
   RelicVaultHidden as RelicVaultHiddenContract,
+  RelicVaultPickResult as RelicVaultPickResultContract,
   RelicVaultPickSession as RelicVaultPickSessionContract
 } from "../../contracts/api";
 
 export type RelicVaultHidden = RelicVaultHiddenContract;
 
 export type RelicVaultBoardSlot = RelicVaultBoardSlotContract;
+export type RelicVaultPickResult = RelicVaultPickResultContract;
 
 export type RelicVaultPickSession = RelicVaultPickSessionContract;
 export type VaultPickSession = RelicVaultPickSession;
@@ -120,6 +122,8 @@ export function resolveRelicVaultPick(input: ResolveRelicVaultPickInput): RelicV
   const jackpotTierHits: JackpotTier[] = [];
   let baseAward = 0;
   let runningMultiplier = 1;
+  let runningAward = 0;
+  const pickResults: RelicVaultPickResult[] = [];
 
   const pickIndex = (mustAvoidBustShield: boolean): number | null => {
     const candidates = [...remaining].filter((index) => {
@@ -149,30 +153,52 @@ export function resolveRelicVaultPick(input: ResolveRelicVaultPickInput): RelicV
 
     const slot = board[selected] as RelicVaultBoardSlot;
     revealed.push(slot.slotId);
+    const previousRunningAward = runningAward;
 
     if (slot.hidden === "coin" || slot.hidden === "bustShield") {
       const value = typeof slot.value === "number" ? slot.value : 0;
       baseAward = roundCoins(baseAward + input.bet * value);
-      continue;
-    }
-
-    if (slot.hidden === "multiplier") {
+    } else if (slot.hidden === "multiplier") {
       const value = typeof slot.value === "number" ? slot.value : 1;
       runningMultiplier = roundCoins(runningMultiplier * Math.max(1, value));
-      continue;
-    }
-
-    if (slot.hidden === "jackpotTier" && typeof slot.value === "string") {
+    } else if (slot.hidden === "jackpotTier" && typeof slot.value === "string") {
       const tier = slot.value as JackpotTier;
       jackpotMatchCounts[tier] += 1;
 
-      if (jackpotMatchCounts[tier] >= 3 && !jackpotTierHits.includes(tier)) {
+      const awardedTier = jackpotMatchCounts[tier] >= 3 && !jackpotTierHits.includes(tier) ? tier : undefined;
+
+      if (awardedTier) {
         jackpotTierHits.push(tier);
       }
+
+      runningAward = roundCoins(baseAward * runningMultiplier);
+
+      pickResults.push({
+        pickIndex: pick + 1,
+        slotId: slot.slotId,
+        hidden: slot.hidden,
+        value: slot.value,
+        awardDelta: roundCoins(Math.max(0, runningAward - previousRunningAward)),
+        runningAward,
+        ...(awardedTier ? { jackpotTierGranted: awardedTier } : {})
+      });
+
+      continue;
     }
+
+    runningAward = roundCoins(baseAward * runningMultiplier);
+
+    pickResults.push({
+      pickIndex: pick + 1,
+      slotId: slot.slotId,
+      hidden: slot.hidden,
+      ...(slot.value !== undefined ? { value: slot.value } : {}),
+      awardDelta: roundCoins(Math.max(0, runningAward - previousRunningAward)),
+      runningAward
+    });
   }
 
-  const finalAward = roundCoins(baseAward * runningMultiplier);
+  const finalAward = runningAward;
 
   return {
     type: "RELIC_VAULT_PICK",
@@ -182,6 +208,7 @@ export function resolveRelicVaultPick(input: ResolveRelicVaultPickInput): RelicV
     picksMade: revealed.length,
     revealed,
     guaranteedNonBustFirstPick: true,
+    pickResults,
     jackpotTierHits,
     finalAward
   };

@@ -2,7 +2,7 @@
   "name": "ember-thrones",
   "private": true,
   "version": "0.1.0",
-  "description": "Local-only dragon-themed hold-and-respin slot game",
+  "description": "Dragon-themed slot product with server-authoritative connected play and an explicit GitHub Pages demo channel",
   "workspaces": [
     "apps/*",
     "packages/*"

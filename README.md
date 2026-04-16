@@ -1,41 +1,42 @@
 # Ember Thrones
 
-Ember Thrones is a local-only, dragon-themed slot game inspired by hold-and-respin style gameplay.
+Ember Thrones is a dragon-themed slot product with two explicit runtime channels:
+
+- Connected app: server-authoritative spins, signed responses, durable bonus sessions, live event support, and replay-safe queue handling.
+- GitHub Pages demo: a clearly disclosed showcase runtime with local spin resolution and no live sync or queue replay.
 
 ## Stack
 
-- Client: Vite + React + TypeScript + PixiJS + GSAP + Howler
+- Client: Vite + React + TypeScript + PixiJS + Howler
 - Server: Fastify + SQLite + TypeScript
-- Shared: Deterministic game domain, contracts, simulation
+- Shared: deterministic contracts, feature resolvers, and simulation gates
 
-## Quick Start (Serverless First)
+## Quick Start
 
 1. Install dependencies:
    - `npm install`
-2. Run desktop preview (build + local PWA preview):
+2. Run the connected local stack for authoritative behavior:
+   - `npm run desktop:local`
+3. Run the demo desktop preview (build + local PWA preview):
    - `powershell -ExecutionPolicy Bypass -File .\run-desktop.ps1`
-3. Run mobile PWA preview on LAN (prints phone URLs):
+4. Run the demo mobile PWA preview on LAN:
    - `powershell -ExecutionPolicy Bypass -File .\run-mobile-pwa.ps1`
-4. Publish to GitHub Pages:
+5. Publish the GitHub Pages demo artifact:
    - `npm run publish:pages`
 
-Pages setup + troubleshooting is documented in [docs/serverless-pages.md](docs/serverless-pages.md).
-Local run variants (including full client + server) are in [docs/local-run.md](docs/local-run.md).
+Connected and demo run modes are documented in [docs/local-run.md](docs/local-run.md).
+Pages setup and troubleshooting are documented in [docs/serverless-pages.md](docs/serverless-pages.md).
 
-## Full Local Stack (Client + Server)
+## Verification
 
-Use this when testing server-authoritative behavior:
-
-1. Run client + server together:
-   - `npm run desktop:local`
-2. Build all workspaces:
-   - `npm run build`
-3. Run tests:
-   - `npm run test`
+- `npm run build`
+- `npm run test`
+- `npm run lint`
+- `npm run sim`
 
 ## Project Layout
 
-- apps/client: UI, animation, rendering, audio
-- apps/server: API, persistence, signing, replay guard
-- packages/shared: contracts, game math, feature engines
-- docs: game design, math model, release checklist
+- apps/client: UI, runtime capability messaging, rendering, audio, and PWA shell
+- apps/server: API, persistence, bonus session orchestration, signing, and replay guard
+- packages/shared: contracts, deterministic feature engines, progression helpers, and simulation
+- docs: design, runbooks, release gates, and operator notes

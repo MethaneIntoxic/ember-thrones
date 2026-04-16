@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Relic Vault crest">
+  <defs>
+    <radialGradient id="vault-core" cx="50%" cy="46%" r="58%">
+      <stop offset="0" stop-color="#f3fff7"/>
+      <stop offset="0.38" stop-color="#7fe5d1"/>
+      <stop offset="1" stop-color="#15373b"/>
+    </radialGradient>
+    <linearGradient id="vault-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9fff5"/>
+      <stop offset="0.5" stop-color="#83e5cc"/>
+      <stop offset="1" stop-color="#3d9f94"/>
+    </linearGradient>
+  </defs>
+  <circle cx="80" cy="80" r="72" fill="#102024" stroke="url(#vault-ring)" stroke-width="6"/>
+  <path d="M46 114 V72 C46 53 61 38 80 38 C99 38 114 53 114 72 V114" fill="none" stroke="#dffff8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M54 114 H106 V78 H54 Z" fill="url(#vault-core)" fill-opacity="0.22" stroke="#d2fff4" stroke-width="3"/>
+  <path d="M80 62 L92 84 L80 104 L68 84 Z" fill="url(#vault-ring)"/>
+  <circle cx="80" cy="84" r="7" fill="#102024"/>
+  <path d="M32 88 L46 78 L46 98 Z" fill="#7ee3d2" fill-opacity="0.78"/>
+  <path d="M128 88 L114 78 L114 98 Z" fill="#7ee3d2" fill-opacity="0.78"/>
+  <path d="M80 24 L88 36 H72 Z" fill="#d9fff7" fill-opacity="0.86"/>
+</svg>

@@ -1,15 +1,23 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { ServerEvent } from "../lib/eventBus.js";
 
+export function buildSseHeaders(origin?: string): Record<string, string> {
+  const allowOrigin = typeof origin === "string" && origin.trim().length > 0 ? origin : "*";
+
+  return {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    "Access-Control-Allow-Origin": allowOrigin,
+    Vary: "Origin"
+  };
+}
+
 const eventsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/events", async (request, reply) => {
     reply.hijack();
-    reply.raw.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
+    reply.raw.writeHead(200, buildSseHeaders(request.headers.origin));
 
     const writeEvent = (eventName: string, payload: unknown): void => {
       if (reply.raw.writableEnded) {

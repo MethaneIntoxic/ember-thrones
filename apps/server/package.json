@@ -7,12 +7,16 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "prebuild": "npm --prefix ../../packages/shared run build",
     "build": "tsc -p tsconfig.json",
+    "pretypecheck": "npm --prefix ../../packages/shared run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm --prefix ../../packages/shared run build",
     "test": "tsx --test tests/**/*.test.ts",
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@ember-thrones/shared": "file:../../packages/shared",
     "@fastify/cors": "^10.1.0",
     "better-sqlite3": "^12.1.1",
     "fastify": "^5.2.1",

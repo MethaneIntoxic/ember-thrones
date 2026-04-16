@@ -1,6 +1,8 @@
+import { resolveRuntimeMode, type RuntimeMode } from "../platform/runtimePolicy";
+
 export type JackpotTier = "ember" | "relic" | "mythic" | "throne";
 
-export type BonusType = "EMBER_RESPIN" | "WHEEL_ASCENSION" | "RELIC_VAULT";
+export type BonusType = "EMBER_RESPIN" | "WHEEL_ASCENSION" | "RELIC_VAULT_PICK";
 
 export interface BonusJackpotAward {
   tier: JackpotTier;
@@ -14,6 +16,7 @@ export interface BonusPayload {
   revealSeed: string;
   precomputedOutcome: Record<string, unknown>;
   expectedTotalAward: number;
+  jackpotTiersHit: JackpotTier[];
   jackpotAwards: BonusJackpotAward[];
 }
 
@@ -40,9 +43,11 @@ export interface ConfigResponse {
 
 export interface SpinRequest {
   profileId: string;
+  playerId?: string;
   sessionId: string;
   bet: number;
   linesMode: number;
+  lines?: number;
   clientNonce: string;
 }
 
@@ -79,11 +84,8 @@ export interface SpinResponse {
   freeQuest: FreeQuestStatus;
 }
 
-type RuntimeMode = "hybrid" | "serverless";
-
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:4300").replace(/\/$/, "");
-const runtimeModeEnv = (import.meta.env.VITE_RUNTIME_MODE ?? "").toLowerCase();
-const RUNTIME_MODE: RuntimeMode = runtimeModeEnv === "hybrid" ? "hybrid" : "serverless";
+const RUNTIME_MODE: RuntimeMode = resolveRuntimeMode(import.meta.env.VITE_RUNTIME_MODE);
 const DEFAULT_PROFILE_ID = "local-dragon";
 
 const FALLBACK_SYMBOL_WEIGHTS: Array<{ symbol: string; weight: number }> = [
@@ -134,7 +136,9 @@ interface ServerSpinResponse {
   };
   triggerFlags?: {
     emberRespin?: boolean;
+    emberRespinCollectorLock?: boolean;
     wheelAscension?: boolean;
+    celestialWheelAscension?: boolean;
     relicVaultPick?: boolean;
     freeQuest?: boolean;
   };
@@ -144,6 +148,7 @@ interface ServerSpinResponse {
     revealSeed?: string;
     precomputedOutcome?: unknown;
     expectedTotalAward?: number;
+    jackpotTiersHit?: Array<string>;
     jackpotAwards?: Array<{ tier?: string; amount?: number; source?: string }>;
   } | null;
   bonusState: {
@@ -179,16 +184,16 @@ function normalizeBonusType(value: unknown): BonusType | null {
   }
 
   const normalized = value.trim().toUpperCase();
-  if (normalized === "EMBER_RESPIN") {
+  if (normalized === "EMBER_RESPIN" || normalized === "EMBER_RESPIN_COLLECTOR_LOCK") {
     return "EMBER_RESPIN";
   }
 
-  if (normalized === "WHEEL_ASCENSION") {
+  if (normalized === "WHEEL_ASCENSION" || normalized === "CELESTIAL_WHEEL_ASCENSION") {
     return "WHEEL_ASCENSION";
   }
 
   if (normalized === "RELIC_VAULT" || normalized === "RELIC_VAULT_PICK") {
-    return "RELIC_VAULT";
+    return "RELIC_VAULT_PICK";
   }
 
   return null;
@@ -209,6 +214,19 @@ function randomNonce(): string {
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
+}
+
+function collectJackpotTiersFromAwards(awards: BonusJackpotAward[]): JackpotTier[] {
+  return Array.from(new Set(awards.map((award) => award.tier)));
+}
+
+export type ApiSpinPolicy = "allow-demo-fallback" | "require-remote";
+
+export class RemoteAuthoritativeUnavailableError extends Error {
+  public constructor(message = "Server-authoritative runtime unavailable.") {
+    super(message);
+    this.name = "RemoteAuthoritativeUnavailableError";
+  }
 }
 
 function randomWeightedSymbol(): string {
@@ -272,7 +290,7 @@ export class ApiClient {
     throne: 28000
   };
 
-  public mode: "remote" | "fallback" = "remote";
+  public mode: "remote" | "fallback" = "fallback";
 
   public constructor(
     baseUrl = API_BASE_URL,
@@ -318,6 +336,21 @@ export class ApiClient {
     };
   }
 
+  private toSpinRequestBody(request: SpinRequest): Record<string, unknown> {
+    const profileId = request.profileId || request.playerId || DEFAULT_PROFILE_ID;
+    const lines = clamp(toNonNegativeInt(request.lines ?? request.linesMode, request.linesMode), 1, 30);
+
+    return {
+      profileId,
+      playerId: request.playerId ?? profileId,
+      sessionId: request.sessionId,
+      bet: request.bet,
+      linesMode: lines,
+      lines,
+      clientNonce: request.clientNonce
+    };
+  }
+
   private mapSpinResponse(server: ServerSpinResponse): SpinResponse {
     this.fallbackWallet = { ...server.updatedWallet };
 
@@ -343,8 +376,10 @@ export class ApiClient {
     const legacyTriggers = server.triggers ?? { emberLock: false, freeQuest: false };
     const triggerFlags = server.triggerFlags ?? {};
 
-    const emberRespinTriggered = Boolean(triggerFlags.emberRespin ?? legacyTriggers.emberLock);
-    const wheelTriggered = Boolean(triggerFlags.wheelAscension);
+    const emberRespinTriggered = Boolean(
+      triggerFlags.emberRespin ?? triggerFlags.emberRespinCollectorLock ?? legacyTriggers.emberLock
+    );
+    const wheelTriggered = Boolean(triggerFlags.wheelAscension ?? triggerFlags.celestialWheelAscension);
     const relicTriggered = Boolean(triggerFlags.relicVaultPick);
     const freeQuestTriggered = Boolean(triggerFlags.freeQuest ?? legacyTriggers.freeQuest);
 
@@ -441,6 +476,9 @@ export class ApiClient {
             : randomNonce(),
         precomputedOutcome: isRecord(payload?.precomputedOutcome) ? payload.precomputedOutcome : {},
         expectedTotalAward: toNonNegativeInt(payload?.expectedTotalAward, totalWin),
+        jackpotTiersHit: Array.isArray(payload?.jackpotTiersHit)
+          ? payload.jackpotTiersHit.filter((tier): tier is JackpotTier => isJackpotTier(tier))
+          : collectJackpotTiersFromAwards(jackpotAwards),
         jackpotAwards
       };
     }
@@ -450,7 +488,7 @@ export class ApiClient {
       : flags.wheelTriggered
         ? "WHEEL_ASCENSION"
         : flags.relicTriggered
-          ? "RELIC_VAULT"
+          ? "RELIC_VAULT_PICK"
           : null;
 
     if (!fallbackType) {
@@ -463,6 +501,7 @@ export class ApiClient {
       revealSeed: randomNonce(),
       precomputedOutcome: this.buildFallbackOutcome(fallbackType, server, totalWin),
       expectedTotalAward: Math.max(totalWin, Math.floor(totalWin * 1.15)),
+      jackpotTiersHit: [],
       jackpotAwards: []
     };
   }
@@ -704,21 +743,40 @@ export class ApiClient {
     }
   }
 
-  public async spin(request: SpinRequest): Promise<SpinResponse> {
+  public async spin(
+    request: SpinRequest,
+    options: { policy?: ApiSpinPolicy } = {}
+  ): Promise<SpinResponse> {
+    const policy = options.policy ?? "allow-demo-fallback";
+
     if (this.runtimeMode === "serverless") {
       this.mode = "fallback";
+
+      if (policy === "require-remote") {
+        throw new RemoteAuthoritativeUnavailableError(
+          "Configured runtime is demo-only and cannot replay spins to a server."
+        );
+      }
+
       return this.mockSpin(request);
     }
 
     try {
       const result = await this.request<ServerSpinResponse>("/spin", {
         method: "POST",
-        body: JSON.stringify(request)
+        body: JSON.stringify(this.toSpinRequestBody(request))
       });
       this.mode = "remote";
       return this.mapSpinResponse(result);
     } catch {
       this.mode = "fallback";
+
+      if (policy === "require-remote") {
+        throw new RemoteAuthoritativeUnavailableError(
+          "Remote spin failed, so the request must remain queued for server replay."
+        );
+      }
+
       return this.mockSpin(request);
     }
   }
@@ -731,9 +789,11 @@ export function createSpinRequest(
 ): SpinRequest {
   return {
     profileId,
+    playerId: profileId,
     sessionId,
     bet,
     linesMode: 20,
+    lines: 20,
     clientNonce: randomNonce()
   };
 }

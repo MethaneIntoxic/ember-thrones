@@ -1,7 +1,13 @@
-# Serverless GitHub Pages Runbook
+# GitHub Pages Demo Runbook
 
-This is the default publish path for Ember Thrones.
-It builds only the client PWA, deploys to GitHub Pages, and serves one sharable URL for desktop and mobile.
+GitHub Pages is the optional demo and showcase channel for Ember Thrones.
+It is not the canonical connected deployment.
+
+The Pages artifact builds only the client PWA and runs in explicit demo mode:
+- spins resolve locally,
+- live events are unavailable,
+- queue replay is unavailable,
+- runtime disclosure must make those limits obvious in the UI.
 
 ## 1) One-Time GitHub Setup
 
@@ -15,11 +21,11 @@ It builds only the client PWA, deploys to GitHub Pages, and serves one sharable 
 
 From repo root:
 
-- Desktop local preview (build + local preview):
+- Demo desktop preview (build + local preview):
   - `powershell -ExecutionPolicy Bypass -File .\run-desktop.ps1`
-- Mobile PWA preview on LAN (build + preview + phone URLs):
+- Demo mobile PWA preview on LAN (build + preview + phone URLs):
   - `powershell -ExecutionPolicy Bypass -File .\run-mobile-pwa.ps1`
-- Publish to Pages (build + dispatch workflow):
+- Publish the Pages demo (build + dispatch workflow):
   - `npm run publish:pages`
 
 `publish:pages` runs `run-publish-pages.ps1`, which:
@@ -50,15 +56,26 @@ Triggers:
 - Push to `main` or `master` when relevant project files change.
 - Manual run via workflow dispatch.
 
-## 4) First Publish Validation
+## 4) Demo Runtime Expectations
+
+After the Pages build loads, verify the release still behaves like a disclosed demo:
+
+1. The UI clearly indicates demo or fallback runtime rather than implying a connected product.
+2. Spins resolve locally without waiting for a server.
+3. Live event messaging reports unavailable or demo behavior instead of connected status.
+4. Offline queue messaging never implies replay will occur on Pages.
+5. Bonus overlays still render, but resumability expectations remain scoped to the connected app.
+
+## 5) First Publish Validation
 
 After workflow succeeds:
 1. Open Settings -> Pages and copy the site URL.
 2. Load it on desktop and verify the game starts.
-3. Load the same URL on mobile and install as PWA.
-4. Re-open while offline to verify app-shell startup.
+3. Verify the runtime disclosure matches demo behavior.
+4. Load the same URL on mobile and install as PWA.
+5. Re-open while offline to verify app-shell startup.
 
-## 5) Troubleshooting
+## 6) Troubleshooting
 
 ### 404 on JS/CSS assets after deploy
 - Symptom: HTML loads but scripts/styles 404.
@@ -70,6 +87,13 @@ After workflow succeeds:
 ### 404 when refreshing non-root route
 - Symptom: opening a deep client route directly returns 404.
 - Fix: deploy artifact includes `404.html` fallback copied from `index.html`.
+
+### Pages demo is mistaken for the connected product
+- Symptom: users expect live sync, replay, or resumable authoritative bonus behavior.
+- Fix:
+  1. Verify the runtime disclosure is visible in the UI.
+  2. Verify the Pages release notes describe the build as demo or showcase mode.
+  3. Use the connected deployment or local stack for authoritative QA.
 
 ### Workflow cannot deploy to Pages
 - Symptom: deploy step fails with permissions errors.
@@ -91,3 +115,7 @@ After workflow succeeds:
   1. Hard refresh (Ctrl+F5).
   2. If installed as PWA, close and relaunch.
   3. If needed, clear site data/service worker in browser settings.
+
+### Need to validate bonus resume, queue replay, or live events
+- Symptom: QA scope requires authoritative server behavior.
+- Fix: do not use Pages for that test. Run the connected local stack from [local-run.md](local-run.md).

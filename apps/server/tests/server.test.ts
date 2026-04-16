@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createApp, registerApp } from "../src/index.js";
+import { buildSseHeaders } from "../src/routes/events.js";
 
 interface SpinApiResponse {
+  spinId: string;
+  sessionId: string;
   reels: string[][];
   triggers: {
     emberLock: boolean;
@@ -16,23 +19,56 @@ interface SpinApiResponse {
     freeQuest: boolean;
   };
   bonusState: Record<string, unknown>;
-  bonusPayload:
-    | null
-    | {
-        type: string;
-        sessionId: string;
-        revealSeed: string;
-        precomputedOutcome: Record<string, unknown>;
-        expectedTotalAward: number;
-        jackpotAwards: Array<{
-          tier: string;
-          amount: number;
-          source: string;
-        }>;
-      };
+  bonusSessionRef: null | {
+    id: string;
+    type: string;
+    status: string;
+  };
+  bonusPayload: null;
   jackpotSnapshotBefore?: Record<string, number>;
   jackpotSnapshotAfter?: Record<string, number>;
   signature: string;
+}
+
+interface BonusSessionProgressApi {
+  type: string;
+  completed: boolean;
+  claimed: boolean;
+  nextAction: string | null;
+}
+
+interface BonusSessionSnapshotResponse {
+  session: {
+    id: string;
+    sessionId: string;
+    profileId: string;
+    type: string;
+    status: string;
+    expectedTotalAward: number;
+    actualAward: number;
+    jackpotAwards: Array<{
+      tier: string;
+      amount: number;
+      source: string;
+    }>;
+    progress: BonusSessionProgressApi;
+  };
+  action?: {
+    actionType: string;
+    ordinal: number;
+  };
+  actions: Array<{
+    actionType: string;
+    ordinal: number;
+    requestPayload: Record<string, unknown>;
+    resultPayload: Record<string, unknown>;
+  }>;
+  wallet?: {
+    coins: number;
+    gems: number;
+    lifetimeSpins: number;
+    lifetimeWins: number;
+  };
 }
 
 const buildTestApp = async () => {
@@ -45,6 +81,85 @@ const buildTestApp = async () => {
 
   await registerApp(app);
   return app;
+};
+
+const createTestProfile = async (
+  app: Awaited<ReturnType<typeof buildTestApp>>,
+  profileId: string,
+  coins = 5_000_000
+): Promise<void> => {
+  const response = await app.inject({
+    method: "POST",
+    url: "/profile",
+    payload: {
+      profileId,
+      nickname: `Profile ${profileId}`,
+      coins,
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+};
+
+const getBonusSnapshot = async (
+  app: Awaited<ReturnType<typeof buildTestApp>>,
+  bonusSessionId: string
+): Promise<BonusSessionSnapshotResponse> => {
+  const response = await app.inject({
+    method: "GET",
+    url: `/bonus/${bonusSessionId}`,
+  });
+
+  assert.equal(response.statusCode, 200);
+  return response.json() as BonusSessionSnapshotResponse;
+};
+
+const findTriggeredBonus = async (
+  app: Awaited<ReturnType<typeof buildTestApp>>,
+  profileId: string,
+  options: {
+    desiredType?: string;
+    requireActionable?: boolean;
+    maxAttempts?: number;
+  } = {}
+): Promise<{ spin: SpinApiResponse; snapshot: BonusSessionSnapshotResponse }> => {
+  const maxAttempts = options.maxAttempts ?? 2500;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const sessionId = `bonus-session-${profileId}-${attempt}`;
+    const response = await app.inject({
+      method: "POST",
+      url: "/spin",
+      payload: {
+        profileId,
+        sessionId,
+        bet: 50,
+        linesMode: 20,
+        clientNonce: `nonce-${profileId}-${attempt.toString().padStart(4, "0")}-authoritative`,
+        volatility: "high",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const spin = response.json() as SpinApiResponse;
+    if (!spin.bonusSessionRef) {
+      continue;
+    }
+
+    if (options.desiredType && spin.bonusSessionRef.type !== options.desiredType) {
+      continue;
+    }
+
+    const snapshot = await getBonusSnapshot(app, spin.bonusSessionRef.id);
+    const nextAction = snapshot.session.progress.nextAction;
+    if (options.requireActionable && (!nextAction || nextAction === "CLAIM")) {
+      continue;
+    }
+
+    return { spin, snapshot };
+  }
+
+  assert.fail(`Failed to trigger bonus${options.desiredType ? ` ${options.desiredType}` : ""} within budget`);
 };
 
 test("profile lifecycle endpoints create and fetch wallets", async () => {
@@ -76,6 +191,17 @@ test("profile lifecycle endpoints create and fetch wallets", async () => {
   } finally {
     await app.close();
   }
+});
+
+test("event stream headers preserve origin for browser EventSource clients", () => {
+  const headers = buildSseHeaders("http://127.0.0.1:5173");
+
+  assert.equal(headers["Content-Type"], "text/event-stream");
+  assert.equal(headers["Access-Control-Allow-Origin"], "http://127.0.0.1:5173");
+  assert.equal(headers.Vary, "Origin");
+
+  const defaultHeaders = buildSseHeaders();
+  assert.equal(defaultHeaders["Access-Control-Allow-Origin"], "*");
 });
 
 test("spin rejects replayed nonce", async () => {
@@ -121,19 +247,11 @@ test("spin rejects replayed nonce", async () => {
   }
 });
 
-test("spin emits triggerFlags/bonusPayload and preserves legacy trigger compatibility", async () => {
+test("spin emits triggerFlags and reserves authoritative bonus sessions", async () => {
   const app = await buildTestApp();
 
   try {
-    await app.inject({
-      method: "POST",
-      url: "/profile",
-      payload: {
-        profileId: "p-spin-v2-1",
-        nickname: "V2 Spinner",
-        coins: 500_000,
-      },
-    });
+    await createTestProfile(app, "p-spin-v2-1", 500_000);
 
     const response = await app.inject({
       method: "POST",
@@ -177,25 +295,39 @@ test("spin emits triggerFlags/bonusPayload and preserves legacy trigger compatib
 
     assert.ok(payload.jackpotSnapshotBefore);
     assert.ok(payload.jackpotSnapshotAfter);
+    assert.equal(payload.bonusPayload, null);
 
     for (const tier of ["ember", "relic", "mythic", "throne"]) {
       assert.equal(typeof payload.jackpotSnapshotBefore?.[tier], "number");
       assert.equal(typeof payload.jackpotSnapshotAfter?.[tier], "number");
     }
 
-    if (payload.bonusPayload) {
-      assert.match(payload.bonusPayload.type, /^(EMBER_RESPIN|WHEEL_ASCENSION|RELIC_VAULT)$/);
-      assert.equal(payload.bonusPayload.sessionId, "s-spin-v2-1");
-      assert.equal(typeof payload.bonusPayload.revealSeed, "string");
-      assert.ok(payload.bonusPayload.revealSeed.length >= 16);
-      assert.equal(typeof payload.bonusPayload.expectedTotalAward, "number");
+    if (payload.bonusSessionRef) {
+      assert.match(payload.bonusSessionRef.type, /^(EMBER_RESPIN|WHEEL_ASCENSION|RELIC_VAULT_PICK)$/);
+      assert.match(payload.bonusSessionRef.status, /^(PENDING|COMPLETED)$/);
 
-      for (const award of payload.bonusPayload.jackpotAwards) {
+      const snapshot = await getBonusSnapshot(app, payload.bonusSessionRef.id);
+      assert.equal(snapshot.session.id, payload.bonusSessionRef.id);
+      assert.equal(snapshot.session.sessionId, "s-spin-v2-1");
+      assert.equal(snapshot.session.type, payload.bonusSessionRef.type);
+      assert.equal(snapshot.actions[0]?.actionType, "START");
+      assert.equal(snapshot.actions[0]?.ordinal, 1);
+
+      for (const award of snapshot.session.jackpotAwards) {
         assert.equal(typeof award.tier, "string");
         assert.equal(typeof award.amount, "number");
         assert.equal(typeof award.source, "string");
         assert.equal(award.amount, payload.jackpotSnapshotBefore?.[award.tier]);
       }
+
+      const activeResponse = await app.inject({
+        method: "GET",
+        url: `/bonus/session/${payload.sessionId}/active`,
+      });
+
+      assert.equal(activeResponse.statusCode, 200);
+      const activeSnapshot = activeResponse.json() as BonusSessionSnapshotResponse;
+      assert.equal(activeSnapshot.session.id, payload.bonusSessionRef.id);
     }
 
     assert.doesNotThrow(() => JSON.stringify(payload));
@@ -210,15 +342,7 @@ test("spin can emit all three reel-triggered bonus payload types", async () => {
   const app = await buildTestApp();
 
   try {
-    await app.inject({
-      method: "POST",
-      url: "/profile",
-      payload: {
-        profileId: "p-spin-v2-2",
-        nickname: "V2 Bonus Hunter",
-        coins: 5_000_000,
-      },
-    });
+    await createTestProfile(app, "p-spin-v2-2");
 
     const seenTypes = new Set<string>();
 
@@ -239,14 +363,14 @@ test("spin can emit all three reel-triggered bonus payload types", async () => {
       assert.equal(response.statusCode, 200);
       const payload = response.json() as SpinApiResponse;
 
-      if (payload.bonusPayload) {
-        seenTypes.add(payload.bonusPayload.type);
+      if (payload.bonusSessionRef) {
+        seenTypes.add(payload.bonusSessionRef.type);
       }
 
       if (
         seenTypes.has("EMBER_RESPIN") &&
         seenTypes.has("WHEEL_ASCENSION") &&
-        seenTypes.has("RELIC_VAULT")
+        seenTypes.has("RELIC_VAULT_PICK")
       ) {
         break;
       }
@@ -254,7 +378,126 @@ test("spin can emit all three reel-triggered bonus payload types", async () => {
 
     assert.ok(seenTypes.has("EMBER_RESPIN"));
     assert.ok(seenTypes.has("WHEEL_ASCENSION"));
-    assert.ok(seenTypes.has("RELIC_VAULT"));
+    assert.ok(seenTypes.has("RELIC_VAULT_PICK"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("bonus lifecycle routes journal actions, enforce sequencing, and credit claims", async () => {
+  const app = await buildTestApp();
+
+  try {
+    const profileId = "p-bonus-life-1";
+    await createTestProfile(app, profileId);
+
+    const { spin, snapshot } = await findTriggeredBonus(app, profileId, {
+      requireActionable: true,
+    });
+
+    assert.ok(spin.bonusSessionRef);
+    assert.equal(snapshot.session.id, spin.bonusSessionRef?.id);
+    assert.equal(snapshot.actions.length, 1);
+    assert.equal(snapshot.actions[0]?.actionType, "START");
+
+    const resumeResponse = await app.inject({
+      method: "POST",
+      url: `/bonus/${snapshot.session.id}/resume`,
+    });
+
+    assert.equal(resumeResponse.statusCode, 200);
+    let current = resumeResponse.json() as BonusSessionSnapshotResponse;
+    assert.equal(current.action?.actionType, "RESUME");
+    assert.equal(current.action?.ordinal, 2);
+    assert.match(current.session.status, /^(ACTIVE|COMPLETED)$/);
+
+    if (!current.session.progress.completed) {
+      const prematureClaimResponse = await app.inject({
+        method: "POST",
+        url: `/bonus/${snapshot.session.id}/claim`,
+      });
+
+      assert.equal(prematureClaimResponse.statusCode, 409);
+    }
+
+    const expectedAction = current.session.progress.nextAction;
+    if (expectedAction && expectedAction !== "CLAIM") {
+      const wrongAction =
+        expectedAction === "RESPIN"
+          ? "PICK"
+          : expectedAction === "WHEEL_STOP"
+            ? "RESPIN"
+            : "WHEEL_STOP";
+
+      const wrongActionResponse = await app.inject({
+        method: "POST",
+        url: `/bonus/${snapshot.session.id}/actions`,
+        payload: {
+          actionType: wrongAction,
+        },
+      });
+
+      assert.equal(wrongActionResponse.statusCode, 409);
+    }
+
+    while (current.session.progress.nextAction && current.session.progress.nextAction !== "CLAIM") {
+      const beforeOrdinal = current.actions[current.actions.length - 1]?.ordinal ?? 0;
+      const actionType = current.session.progress.nextAction;
+      const actionResponse = await app.inject({
+        method: "POST",
+        url: `/bonus/${snapshot.session.id}/actions`,
+        payload: {
+          actionType,
+        },
+      });
+
+      assert.equal(actionResponse.statusCode, 200);
+      current = actionResponse.json() as BonusSessionSnapshotResponse;
+      assert.equal(current.action?.actionType, actionType);
+      assert.equal(current.action?.ordinal, beforeOrdinal + 1);
+    }
+
+    assert.equal(current.session.progress.nextAction, "CLAIM");
+    assert.equal(current.session.progress.completed, true);
+    assert.equal(current.session.status, "COMPLETED");
+
+    const walletBeforeClaim = app.db.getWallet(profileId);
+    assert.ok(walletBeforeClaim);
+
+    const claimResponse = await app.inject({
+      method: "POST",
+      url: `/bonus/${snapshot.session.id}/claim`,
+    });
+
+    assert.equal(claimResponse.statusCode, 200);
+    const claimed = claimResponse.json() as BonusSessionSnapshotResponse;
+    assert.equal(claimed.action?.actionType, "CLAIM");
+    assert.equal(claimed.session.status, "CLAIMED");
+    assert.equal(claimed.session.progress.claimed, true);
+    assert.equal(claimed.session.progress.nextAction, null);
+    assert.ok(claimed.wallet);
+    assert.equal(
+      claimed.wallet?.coins,
+      (walletBeforeClaim?.coins ?? 0) + claimed.session.actualAward,
+    );
+
+    const postClaimSnapshot = await getBonusSnapshot(app, snapshot.session.id);
+    assert.equal(postClaimSnapshot.session.status, "CLAIMED");
+    assert.equal(postClaimSnapshot.actions.at(-1)?.actionType, "CLAIM");
+
+    const activeAfterClaimResponse = await app.inject({
+      method: "GET",
+      url: `/bonus/session/${spin.sessionId}/active`,
+    });
+
+    assert.equal(activeAfterClaimResponse.statusCode, 404);
+
+    const persistedSession = app.db.getSession(spin.sessionId);
+    assert.ok(persistedSession);
+    assert.deepEqual(
+      (persistedSession?.state as { activeBonusSessionRef?: unknown }).activeBonusSessionRef,
+      null,
+    );
   } finally {
     await app.close();
   }
