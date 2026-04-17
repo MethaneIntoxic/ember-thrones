@@ -32,6 +32,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function readOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readOptionalSpeedMode(value: unknown): SpinRequest["speedMode"] {
+  return value === "normal" || value === "turbo" || value === "auto" ? value : undefined;
+}
+
 function normalizeQueuedSpin(candidate: unknown): OfflineQueuedSpin | null {
   if (!isRecord(candidate)) {
     return null;
@@ -63,12 +75,27 @@ function normalizeQueuedSpin(candidate: unknown): OfflineQueuedSpin | null {
 
   return {
     profileId,
-    playerId: profileId,
+    playerId: typeof candidate.playerId === "string" ? candidate.playerId : profileId,
     sessionId: candidate.sessionId,
     bet: candidate.bet,
     linesMode,
     lines: linesMode,
     clientNonce: candidate.clientNonce,
+    ...(readOptionalNumber(candidate.denomination) !== undefined
+      ? { denomination: readOptionalNumber(candidate.denomination) }
+      : {}),
+    ...(readOptionalNumber(candidate.creditsPerSpin) !== undefined
+      ? { creditsPerSpin: readOptionalNumber(candidate.creditsPerSpin) }
+      : {}),
+    ...(readOptionalSpeedMode(candidate.speedMode) !== undefined
+      ? { speedMode: readOptionalSpeedMode(candidate.speedMode) }
+      : {}),
+    ...(readOptionalBoolean(candidate.isMaxBet) !== undefined
+      ? { isMaxBet: readOptionalBoolean(candidate.isMaxBet) }
+      : {}),
+    ...(readOptionalBoolean(candidate.qualifiesForProgressive) !== undefined
+      ? { qualifiesForProgressive: readOptionalBoolean(candidate.qualifiesForProgressive) }
+      : {}),
     queuedAt: typeof candidate.queuedAt === "number" ? candidate.queuedAt : Date.now(),
     replayPolicy:
       candidate.replayPolicy === "server-authoritative" ? "server-authoritative" : "unknown"
@@ -192,7 +219,16 @@ export async function drainOfflineSpinQueue<T>(
         bet: current.bet,
         linesMode: current.linesMode,
         lines: current.lines ?? current.linesMode,
-        clientNonce: current.clientNonce
+        clientNonce: current.clientNonce,
+        ...(current.denomination !== undefined ? { denomination: current.denomination } : {}),
+        ...(current.creditsPerSpin !== undefined
+          ? { creditsPerSpin: current.creditsPerSpin }
+          : {}),
+        ...(current.speedMode !== undefined ? { speedMode: current.speedMode } : {}),
+        ...(current.isMaxBet !== undefined ? { isMaxBet: current.isMaxBet } : {}),
+        ...(current.qualifiesForProgressive !== undefined
+          ? { qualifiesForProgressive: current.qualifiesForProgressive }
+          : {})
       });
 
       remainingQueue.splice(index, 1);

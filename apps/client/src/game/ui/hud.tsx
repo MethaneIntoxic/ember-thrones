@@ -1,10 +1,12 @@
 import type { FC } from "react";
+import type { BaseGameMathConfig, WagerProfile } from "../net/apiClient";
 import type { RuntimeExperience } from "../platform/runtimePolicy";
 
 export interface HudProps {
   coins: number;
   gems: number;
-  bet: number;
+  wager: WagerProfile;
+  mathConfig: BaseGameMathConfig;
   minBet: number;
   maxBet: number;
   spinning: boolean;
@@ -17,17 +19,38 @@ export interface HudProps {
   queueCanReplayNow: boolean;
   installAvailable: boolean;
   updateAvailable: boolean;
+  autoSpinArmed: boolean;
   onSpin: () => void;
-  onAdjustBet: (delta: number) => void;
+  onSetDenomination: (value: number) => void;
+  onSetCreditsPerSpin: (value: number) => void;
+  onSetSpeedMode: (value: WagerProfile["speedMode"]) => void;
+  onMaxBet: () => void;
   onSyncQueue: () => void;
   onInstall: () => void;
   onApplyUpdate: () => void;
 }
 
+function formatDenomination(value: number): string {
+  return value === 1 ? "1 coin" : `${value} coins`;
+}
+
+function formatSpeedLabel(value: WagerProfile["speedMode"]): string {
+  if (value === "turbo") {
+    return "Turbo";
+  }
+
+  if (value === "auto") {
+    return "Auto";
+  }
+
+  return "Normal";
+}
+
 export const Hud: FC<HudProps> = ({
   coins,
   gems,
-  bet,
+  wager,
+  mathConfig,
   minBet,
   maxBet,
   spinning,
@@ -40,16 +63,18 @@ export const Hud: FC<HudProps> = ({
   queueCanReplayNow,
   installAvailable,
   updateAvailable,
+  autoSpinArmed,
   onSpin,
-  onAdjustBet,
+  onSetDenomination,
+  onSetCreditsPerSpin,
+  onSetSpeedMode,
+  onMaxBet,
   onSyncQueue,
   onInstall,
   onApplyUpdate
 }) => {
-  const canDecrease = bet > minBet;
-  const canIncrease = bet < maxBet;
   const betRange = Math.max(1, maxBet - minBet);
-  const betProgress = Math.max(0, Math.min(100, ((bet - minBet) / betRange) * 100));
+  const betProgress = Math.max(0, Math.min(100, ((wager.totalBet - minBet) / betRange) * 100));
   const queueCopy = !queueSupported
     ? "Demo runtime keeps spin results local. Queue replay is unavailable."
     : !online
@@ -70,9 +95,19 @@ export const Hud: FC<HudProps> = ({
       : runtimeExperience === "disconnected"
         ? "is-offline"
         : "is-demo";
+  const spinButtonLabel = spinning
+    ? wager.speedMode === "auto" && autoSpinArmed
+      ? "Auto Running..."
+      : "Spinning..."
+    : wager.speedMode === "auto"
+      ? autoSpinArmed
+        ? "Stop Auto"
+        : "Start Auto"
+      : `Spin ${wager.totalBet.toLocaleString()}`;
+  const qualificationClass = wager.qualifiesForProgressive ? "is-qualified" : "is-locked";
 
   return (
-    <section className="hud-card" aria-label="Spin controls and wallet status">
+    <section className="hud-card" aria-label="Wager controls and wallet status">
       <div className="hud-top">
         <div className="hud-balance-panel">
           <p className="hud-label">Dragon Vault</p>
@@ -88,49 +123,133 @@ export const Hud: FC<HudProps> = ({
             {runtimeLabel}
             {queueSupported && queuedSpins > 0 ? ` · queue ${queuedSpins}` : ""}
           </div>
-          <p className="hud-queue-copy">{online ? queueCopy : "Offline spins store locally until sync returns."}</p>
+          <p className="hud-queue-copy">
+            {online ? queueCopy : "Offline spins store locally until sync returns."}
+          </p>
         </div>
       </div>
 
       <div className="hud-controls">
         <div className="hud-controls-primary">
-          <div className="bet-cluster">
-            <div className="bet-copy-row">
-              <span className="hud-label">Bet Level</span>
-              <strong>{bet.toLocaleString()}</strong>
+          <div className="wager-cluster">
+            <div className="wager-summary-grid">
+              <div>
+                <span className="hud-label">Denomination</span>
+                <strong>{formatDenomination(wager.denomination)}</strong>
+              </div>
+              <div>
+                <span className="hud-label">Credits / Spin</span>
+                <strong>{wager.creditsPerSpin.toLocaleString()}</strong>
+              </div>
+              <div>
+                <span className="hud-label">Fixed Lines</span>
+                <strong>{mathConfig.fixedLines}</strong>
+              </div>
+              <div>
+                <span className="hud-label">Speed</span>
+                <strong>{formatSpeedLabel(wager.speedMode)}</strong>
+              </div>
             </div>
 
-            <div className="bet-control">
-              <button
-                type="button"
-                onClick={() => onAdjustBet(-5)}
-                disabled={!canDecrease || spinning}
-                aria-label="Decrease bet"
-              >
-                -
-              </button>
-              <span>Bet {bet}</span>
-              <button
-                type="button"
-                onClick={() => onAdjustBet(5)}
-                disabled={!canIncrease || spinning}
-                aria-label="Increase bet"
-              >
-                +
-              </button>
+            <div className="control-stack">
+              <div className="control-group">
+                <div className="bet-copy-row">
+                  <span className="hud-label">Denomination</span>
+                  <strong>{formatDenomination(wager.denomination)}</strong>
+                </div>
+                <div className="choice-row" role="group" aria-label="Select denomination">
+                  {mathConfig.denominations.map((value) => (
+                    <button
+                      key={`denom-${value}`}
+                      type="button"
+                      className={`choice-chip ${wager.denomination === value ? "is-active" : ""}`}
+                      onClick={() => onSetDenomination(value)}
+                      disabled={spinning}
+                    >
+                      {formatDenomination(value)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="control-group">
+                <div className="bet-copy-row">
+                  <span className="hud-label">Credits Per Spin</span>
+                  <strong>{wager.creditsPerSpin.toLocaleString()}</strong>
+                </div>
+                <div className="choice-row" role="group" aria-label="Select credits per spin">
+                  {mathConfig.creditsPerSpinOptions.map((value) => (
+                    <button
+                      key={`credits-${value}`}
+                      type="button"
+                      className={`choice-chip ${wager.creditsPerSpin === value ? "is-active" : ""}`}
+                      onClick={() => onSetCreditsPerSpin(value)}
+                      disabled={spinning}
+                    >
+                      {value.toLocaleString()} credits
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="control-group control-group-inline">
+                <div className="control-group-flex">
+                  <div className="bet-copy-row">
+                    <span className="hud-label">Cabinet Speed</span>
+                    <strong>{formatSpeedLabel(wager.speedMode)}</strong>
+                  </div>
+                  <div className="choice-row" role="group" aria-label="Select spin speed">
+                    {mathConfig.speedModes.map((value) => (
+                      <button
+                        key={`speed-${value}`}
+                        type="button"
+                        className={`choice-chip ${wager.speedMode === value ? "is-active" : ""}`}
+                        onClick={() => onSetSpeedMode(value)}
+                        disabled={spinning}
+                      >
+                        {formatSpeedLabel(value)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={`max-bet-button ${wager.isMaxBet ? "is-active" : ""}`}
+                  onClick={onMaxBet}
+                  disabled={spinning}
+                >
+                  {wager.isMaxBet ? "Max Bet Active" : "Max Bet"}
+                </button>
+              </div>
             </div>
 
-            <progress className="bet-track" value={betProgress} max={100} aria-hidden="true" />
-
-            <div className="bet-range-row" aria-hidden="true">
-              <span>{minBet}</span>
-              <span>{maxBet}</span>
+            <div className="wager-signal-card">
+              <div className="bet-copy-row">
+                <span className="hud-label">Cabinet Wager</span>
+                <strong>{wager.totalBet.toLocaleString()} coins</strong>
+              </div>
+              <progress className="bet-track" value={betProgress} max={100} aria-hidden="true" />
+              <div className="bet-range-row" aria-hidden="true">
+                <span>{minBet.toLocaleString()}</span>
+                <span>{maxBet.toLocaleString()}</span>
+              </div>
+              <div className={`qualification-pill ${qualificationClass}`}>{wager.progressiveLabel}</div>
             </div>
           </div>
 
-          <button type="button" className="spin-button" disabled={spinning} onClick={onSpin} aria-label="Spin reels">
-            {spinning ? "Spinning..." : "Spin"}
-          </button>
+          <div className="spin-cluster">
+            <button type="button" className="spin-button" disabled={spinning && wager.speedMode !== "auto"} onClick={onSpin} aria-label="Spin reels">
+              {spinButtonLabel}
+            </button>
+            <p className="spin-helper-copy">
+              {wager.speedMode === "auto"
+                ? autoSpinArmed
+                  ? "Auto mode repeats until you stop it or a bonus feature takes focus."
+                  : "Auto mode stays armed only after you start it."
+                : `${formatSpeedLabel(wager.speedMode)} settle profile on a fixed 5x3 cabinet.`}
+            </p>
+          </div>
         </div>
 
         <button

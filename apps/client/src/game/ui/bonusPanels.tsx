@@ -1,14 +1,18 @@
-import type { FC } from "react";
-import type { BonusType, EmberLockStatus, FreeQuestStatus, JackpotTier } from "../net/apiClient";
+import type {
+  BaseGameMathConfig,
+  EmberLockStatus,
+  FreeQuestStatus,
+  JackpotTier,
+  WagerProfile
+} from "../net/apiClient";
 import type { RuntimeCapabilities } from "../platform/runtimePolicy";
-import type { ActiveBonusPresentation, ProgressionState } from "../state/store";
+import type { ActiveBonusPresentation } from "../state/store";
 import { getBonusTheme } from "./bonusThemes";
 
 export interface BonusPanelsProps {
   jackpotLadder: Record<JackpotTier, number>;
   emberLock: EmberLockStatus;
   freeQuest: FreeQuestStatus;
-  progression: ProgressionState;
   activeBonus: ActiveBonusPresentation | null;
   bonusSessionCount: number;
   runtimeCapabilities: RuntimeCapabilities;
@@ -17,26 +21,11 @@ export interface BonusPanelsProps {
   eventStreamState: "idle" | "connected" | "disconnected" | "unavailable";
   queuedSpins: number;
   strandedQueuedSpins: number;
+  mathConfig: BaseGameMathConfig;
+  wager: WagerProfile;
 }
 
 const JACKPOT_ORDER: JackpotTier[] = ["ember", "relic", "mythic", "throne"];
-
-function activeLabel(isActive: boolean): string {
-  return isActive ? "Live" : "Idle";
-}
-
-function clampPercentage(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function readInt(value: unknown, fallback = 0): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.floor(parsed));
-}
 
 function describeEventState(
   runtimeCapabilities: RuntimeCapabilities,
@@ -75,11 +64,22 @@ function describeQueueState(
   return runtimeCapabilities.offlineQueue.canReplayNow ? "Replay ready" : "Standby";
 }
 
-export const BonusPanels: FC<BonusPanelsProps> = ({
+function transportLabel(transport: ActiveBonusPresentation["transport"]): string {
+  if (transport === "streamed") {
+    return "Authoritative stream";
+  }
+
+  if (transport === "demo") {
+    return "Demo staging";
+  }
+
+  return "Seeded snapshot";
+}
+
+export const BonusPanels = ({
   jackpotLadder,
   emberLock,
   freeQuest,
-  progression,
   activeBonus,
   bonusSessionCount,
   runtimeCapabilities,
@@ -87,88 +87,73 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
   queueSummary,
   eventStreamState,
   queuedSpins,
-  strandedQueuedSpins
-}) => {
-  const activeBonusType: BonusType | null = activeBonus?.type ?? null;
-  const emberRespinLive = activeBonusType === "EMBER_RESPIN" || emberLock.active;
-  const wheelAscensionLive = activeBonusType === "WHEEL_ASCENSION";
-  const relicVaultLive = activeBonusType === "RELIC_VAULT_PICK";
-
-  const activeOutcome = activeBonus?.precomputedOutcome ?? {};
-  const emberLockedCells = activeBonusType === "EMBER_RESPIN"
-    ? readInt(activeOutcome.startingOrbs && Array.isArray(activeOutcome.startingOrbs) ? activeOutcome.startingOrbs.length : activeOutcome.lockedCells && Array.isArray(activeOutcome.lockedCells) ? activeOutcome.lockedCells.length : emberLock.lockedCells, emberLock.lockedCells)
-    : emberLock.lockedCells;
-  const emberRespinsRemaining = activeBonusType === "EMBER_RESPIN"
-    ? readInt(activeOutcome.respinsRemaining, emberLock.respinsRemaining)
-    : emberLock.respinsRemaining;
-  const wheelAwardedSpins = activeBonusType === "WHEEL_ASCENSION"
-    ? readInt(activeOutcome.awardedSpins, 0)
-    : 0;
-  const wheelMaxSpins = activeBonusType === "WHEEL_ASCENSION"
-    ? Math.max(wheelAwardedSpins, readInt(activeOutcome.maxSpins, wheelAwardedSpins))
-    : 0;
-  const relicKeyCount = activeBonusType === "RELIC_VAULT_PICK"
-    ? readInt(activeOutcome.keyCount, 0)
-    : 0;
-  const relicPicksAllowed = activeBonusType === "RELIC_VAULT_PICK"
-    ? readInt(activeOutcome.picksAllowed, relicKeyCount)
-    : 0;
-
-  const featureCards = [
-    {
-      key: "ember-respin",
-      theme: getBonusTheme("EMBER_RESPIN"),
-      live: emberRespinLive,
-      intensity: clampPercentage((emberLockedCells / 15) * 70 + (emberRespinsRemaining / 3) * 30),
-      metrics: [
-        ["Locked Cells", emberLockedCells],
-        ["Respins Remaining", emberRespinsRemaining]
-      ]
-    },
-    {
-      key: "wheel-ascension",
-      theme: getBonusTheme("WHEEL_ASCENSION"),
-      live: wheelAscensionLive,
-      intensity: clampPercentage(
-        wheelAscensionLive
-          ? (wheelAwardedSpins / Math.max(1, wheelMaxSpins)) * 100
-          : bonusSessionCount * 8
-      ),
-      metrics: [
-        [wheelAscensionLive ? "Awarded Spins" : "Tracked Sessions", wheelAscensionLive ? wheelAwardedSpins : bonusSessionCount],
-        [wheelAscensionLive ? "Spin Cap" : "Quest Stance", wheelAscensionLive ? wheelMaxSpins : freeQuest.active ? 1 : 0]
-      ]
-    },
-    {
-      key: "relic-vault",
-      theme: getBonusTheme("RELIC_VAULT_PICK"),
-      live: relicVaultLive,
-      intensity: clampPercentage(
-        relicVaultLive
-          ? (Math.max(relicKeyCount, relicPicksAllowed) / Math.max(1, relicPicksAllowed || relicKeyCount || 1)) * 100
-          : (progression.relicShards / 20) * 45 + (progression.forgeMeter / 100) * 55
-      ),
-      metrics: [
-        [relicVaultLive ? "Keys" : "Relic Shards", relicVaultLive ? relicKeyCount : progression.relicShards],
-        [relicVaultLive ? "Picks Allowed" : "Forge Meter", relicVaultLive ? relicPicksAllowed : progression.forgeMeter]
-      ]
-    }
+  strandedQueuedSpins,
+  mathConfig,
+  wager
+}: BonusPanelsProps): JSX.Element => {
+  const paytableRows = [
+    ["5 DRAGON", `${(wager.denomination * 500).toLocaleString()} coins`],
+    ["5 CROWN", `${(wager.denomination * 250).toLocaleString()} coins`],
+    ["3 SCATTER", "Free-spin pressure"],
+    ["6 ORBS", "Collector lock starts"],
+    ["Wheel Trigger", "Scatter + dragon cadence"],
+    ["Relic Trigger", "Chest-heavy bonus route"]
   ] as const;
+  const featureTheme = activeBonus ? getBonusTheme(activeBonus.type) : null;
 
   return (
     <aside className="bonus-column">
-      <section className="bonus-card jackpot-card premium-card">
+      <section className="bonus-card premium-card">
         <header className="bonus-card-header premium-header">
           <div>
-            <p className="panel-kicker">Jackpot Ladder</p>
-            <h3>Dragon Crown Tiers</h3>
+            <p className="panel-kicker">Cabinet Paytable</p>
+            <h3>5x3 Reference Guide</h3>
           </div>
-          <span className="bonus-inline-pill">Progressive tension</span>
+          <span className="bonus-inline-pill">{mathConfig.fixedLines} fixed lines</span>
         </header>
 
         <p className="feature-copy">
-          Crown tiers stay visible so the reel field always broadcasts the premium upside before a bonus fires.
+          Presentation targets a fixed-geometry Dragon Link cabinet: denomination sets coin value,
+          credits-per-spin sets wager size, and features stay tied to reel outcomes instead of board expansion.
         </p>
+
+        <div className="feature-metrics">
+          <p className="metric-row">
+            <span>Denomination</span>
+            <strong>{wager.denomination.toLocaleString()} coin{wager.denomination === 1 ? "" : "s"}</strong>
+          </p>
+          <p className="metric-row">
+            <span>Credits / Spin</span>
+            <strong>{wager.creditsPerSpin.toLocaleString()}</strong>
+          </p>
+          <p className="metric-row">
+            <span>Total Bet</span>
+            <strong>{wager.totalBet.toLocaleString()} coins</strong>
+          </p>
+        </div>
+
+        <div className="paytable-list">
+          {paytableRows.map(([label, value]) => (
+            <p key={label} className="metric-row paytable-row">
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </p>
+          ))}
+        </div>
+      </section>
+
+      <section className="bonus-card jackpot-card premium-card">
+        <header className="bonus-card-header premium-header">
+          <div>
+            <p className="panel-kicker">Progressives</p>
+            <h3>Jackpot Ladder</h3>
+          </div>
+          <span className={`bonus-inline-pill ${wager.qualifiesForProgressive ? "is-qualified" : "is-locked"}`}>
+            {wager.isMaxBet ? "Max Bet Active" : "Qualification Watch"}
+          </span>
+        </header>
+
+        <p className="feature-copy">{wager.progressiveLabel}</p>
 
         <ul className="jackpot-list">
           {JACKPOT_ORDER.map((tier) => (
@@ -180,70 +165,61 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
         </ul>
       </section>
 
-      {featureCards.map((card) => (
-        <section key={card.key} className={`bonus-card feature-card premium-card ${card.theme.toneClass} ${card.live ? "is-live" : ""}`}>
-          <header className="bonus-card-header premium-header">
-            <div className="feature-card-title">
-              <div className="feature-crest-wrap" aria-hidden="true">
-                <img src={card.theme.crestAsset} alt="" className="feature-crest" />
-              </div>
-              <div>
-                <p className="panel-kicker">{card.theme.kicker}</p>
-                <h3>{card.theme.label}</h3>
-              </div>
-            </div>
-            <span className={`feature-state ${card.live ? "feature-live" : "feature-idle"}`}>
-              {activeLabel(card.live)}
-            </span>
-          </header>
-
-          <p className="feature-copy">{card.theme.panelCopy}</p>
-
-          <div className="feature-intensity">
-            <div className="feature-intensity-headline">
-              <span>{card.theme.accentLabel}</span>
-              <strong>{card.intensity}%</strong>
-            </div>
-            <progress className="feature-intensity-bar" value={card.intensity} max={100} aria-hidden="true" />
-            <p className="feature-intensity-copy">
-              {card.live ? card.theme.liveLabel : card.theme.idleLabel}
-            </p>
-          </div>
-
-          <div className="feature-metrics">
-            {card.metrics.map(([label, value]) => (
-              <p key={`${card.key}-${label}`} className="metric-row">
-                <span>{label}</span>
-                <strong>{value.toLocaleString()}</strong>
-              </p>
-            ))}
-          </div>
-        </section>
-      ))}
-
-      <section className="bonus-card feature-card premium-card">
+      <section className={`bonus-card premium-card ${featureTheme?.toneClass ?? ""}`}>
         <header className="bonus-card-header premium-header">
           <div>
-            <p className="panel-kicker">Progression</p>
-            <h3>Dragon Forge</h3>
+            <p className="panel-kicker">Feature Summary</p>
+            <h3>{activeBonus ? featureTheme?.label ?? "Active Feature" : "Feature Queue"}</h3>
           </div>
-          <span className="bonus-inline-pill">Persistent economy</span>
+          <span className="bonus-inline-pill">
+            {activeBonus ? transportLabel(activeBonus.transport) : `${bonusSessionCount} tracked`}
+          </span>
         </header>
 
-        <p className="feature-copy">
-          Forge growth and quest pacing keep the premium feature set connected even when no bonus is active.
-        </p>
+        {activeBonus ? (
+          <>
+            <p className="feature-copy">{activeBonus.featureSession.summaryLabel}</p>
 
-        <div className="feature-metrics">
-          <p className="metric-row">
-            <span>Forge Meter</span>
-            <strong>{progression.forgeMeter.toLocaleString()}</strong>
-          </p>
-          <p className="metric-row">
-            <span>Daily Quest Steps</span>
-            <strong>{progression.dailyQuestProgress.toLocaleString()}</strong>
-          </p>
-        </div>
+            <div className="feature-metrics">
+              {activeBonus.featureSession.metrics.slice(0, 4).map((metric) => (
+                <p key={`${metric.label}-${metric.value}`} className="metric-row">
+                  <span>{metric.label}</span>
+                  <strong>{metric.value}</strong>
+                </p>
+              ))}
+            </div>
+
+            <div className="bonus-chip-grid">
+              {activeBonus.featureSession.steps.slice(0, 4).map((step) => (
+                <span key={step.stepId} className={`bonus-chip ${step.highlight ? "is-active" : ""}`}>
+                  {step.title}: {step.valueLabel ?? step.detail}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="feature-copy">
+              No feature is currently open. The side rail now stays focused on the cabinet playbook,
+              progressive qualification, and the most recent feature-session inventory.
+            </p>
+
+            <div className="feature-metrics">
+              <p className="metric-row">
+                <span>Tracked Sessions</span>
+                <strong>{bonusSessionCount.toLocaleString()}</strong>
+              </p>
+              <p className="metric-row">
+                <span>Collector State</span>
+                <strong>{emberLock.active ? `${emberLock.lockedCells} locked / ${emberLock.respinsRemaining} left` : "Idle"}</strong>
+              </p>
+              <p className="metric-row">
+                <span>Free Spins</span>
+                <strong>{freeQuest.active ? `${freeQuest.spinsRemaining} remaining` : "Standby"}</strong>
+              </p>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="bonus-card transport-card premium-card">
@@ -276,9 +252,7 @@ export const BonusPanels: FC<BonusPanelsProps> = ({
           <span>Service Worker</span>
           <strong>{runtimeCapabilities.serviceWorker.enabled ? "Build-versioned cache" : "Disabled in dev"}</strong>
         </p>
-        <p className="transport-note">
-          {runtimeSummary}
-        </p>
+        <p className="transport-note">{runtimeSummary}</p>
         <p className="transport-note">{queueSummary}</p>
       </section>
     </aside>

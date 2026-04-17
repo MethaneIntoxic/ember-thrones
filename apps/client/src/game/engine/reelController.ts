@@ -1,4 +1,5 @@
 import { Assets, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import type { SpinSpeedMode } from "../net/apiClient";
 import { EffectTimeline } from "./effectTimeline";
 
 export interface CellCenter {
@@ -25,6 +26,17 @@ interface SymbolPalette {
   ink: string;
 }
 
+interface SpinTimingProfile {
+  startStaggerMs: number;
+  spinDurationMs: number;
+  settleDurationMs: number;
+  boardPulseMs: number;
+  symbolCycles: number;
+  anticipationDelayMs: number;
+  anticipationHoldMs: number;
+  highlightDelayMs: number;
+}
+
 const DEFAULT_SYMBOL = "DRG";
 const BASE_URL = import.meta.env.BASE_URL.endsWith("/")
   ? import.meta.env.BASE_URL
@@ -48,7 +60,15 @@ const SYMBOL_ALIASES: Record<string, string> = {
   QST: "SCT",
   BLD: "CHS",
   RNG: "RNE",
-  JWL: "CRN"
+  JWL: "CRN",
+  DRAGON: "DRG",
+  WILD: "WLD",
+  SCATTER: "SCT",
+  A: "CRN",
+  K: "RNE",
+  Q: "CHS",
+  J: "CHS",
+  "10": "RNE"
 };
 
 const SYMBOL_SPRITES: Record<string, string> = {
@@ -87,6 +107,45 @@ function spriteFor(symbol: string): string {
 
 function paletteFor(symbol: string): SymbolPalette {
   return SYMBOL_PALETTE[symbol] ?? DEFAULT_SYMBOL_PALETTE;
+}
+
+function timingFor(mode: SpinSpeedMode): SpinTimingProfile {
+  if (mode === "turbo") {
+    return {
+      startStaggerMs: 55,
+      spinDurationMs: 220,
+      settleDurationMs: 120,
+      boardPulseMs: 160,
+      symbolCycles: 5,
+      anticipationDelayMs: 40,
+      anticipationHoldMs: 80,
+      highlightDelayMs: 55
+    };
+  }
+
+  if (mode === "auto") {
+    return {
+      startStaggerMs: 70,
+      spinDurationMs: 260,
+      settleDurationMs: 145,
+      boardPulseMs: 180,
+      symbolCycles: 6,
+      anticipationDelayMs: 60,
+      anticipationHoldMs: 105,
+      highlightDelayMs: 70
+    };
+  }
+
+  return {
+    startStaggerMs: 105,
+    spinDurationMs: 410,
+    settleDurationMs: 220,
+    boardPulseMs: 240,
+    symbolCycles: 8,
+    anticipationDelayMs: 90,
+    anticipationHoldMs: 180,
+    highlightDelayMs: 110
+  };
 }
 
 export class ReelController {
@@ -221,14 +280,27 @@ export class ReelController {
     }
   }
 
-  public async spinTo(reels: string[][], timeline: EffectTimeline): Promise<void> {
+  public async spinTo(
+    reels: string[][],
+    timeline: EffectTimeline,
+    speedMode: SpinSpeedMode = "normal"
+  ): Promise<void> {
+    const timing = timingFor(speedMode);
+    const anticipationColumns = this.resolveAnticipationColumns(reels);
+
     await Promise.all(
       this.columnContainers.map((_, columnIndex) =>
-        this.animateColumnSpin(columnIndex, reels[columnIndex] ?? [], timeline)
+        this.animateColumnSpin(
+          columnIndex,
+          reels[columnIndex] ?? [],
+          timeline,
+          timing,
+          anticipationColumns.has(columnIndex)
+        )
       )
     );
 
-    await timeline.pulse(this.container, 1.03, 220);
+    await timeline.pulse(this.container, speedMode === "normal" ? 1.03 : 1.02, timing.boardPulseMs);
   }
 
   public setWinTint(winLines: number[]): void {
@@ -244,6 +316,27 @@ export class ReelController {
         this.renderCard(card, activeRows.has(row), card.row === 1);
       }
     }
+  }
+
+  public async choreographWinLines(
+    winLines: number[],
+    timeline: EffectTimeline,
+    speedMode: SpinSpeedMode = "normal"
+  ): Promise<void> {
+    const lines = Array.from(new Set(winLines)).filter((row) => row >= 0 && row < this.rows);
+    if (lines.length === 0) {
+      this.setWinTint([]);
+      return;
+    }
+
+    const timing = timingFor(speedMode);
+
+    for (const row of lines) {
+      this.setWinTint([row]);
+      await timeline.wait(timing.highlightDelayMs);
+    }
+
+    this.setWinTint(lines);
   }
 
   private buildGrid(): void {
@@ -289,19 +382,6 @@ export class ReelController {
     }
   }
 
-  private randomizeAllSymbols(): void {
-    for (let col = 0; col < this.columns; col += 1) {
-      for (let row = 0; row < this.rows; row += 1) {
-        const card = this.symbolCards[col]?.[row];
-        if (!card) {
-          continue;
-        }
-
-        this.setCardSymbol(card, randomSymbol(), false);
-      }
-    }
-  }
-
   private refreshTextures(): void {
     for (let col = 0; col < this.columns; col += 1) {
       for (let row = 0; row < this.rows; row += 1) {
@@ -315,10 +395,37 @@ export class ReelController {
     }
   }
 
+  private resolveAnticipationColumns(reels: string[][]): Set<number> {
+    const flat = reels.flat();
+    const orbCount = flat.filter((symbol) => symbol === "ORB").length;
+    const scatterCount = flat.filter((symbol) => symbol === "SCT").length;
+    const chestCount = flat.filter((symbol) => symbol === "CHS").length;
+    const dragonCount = flat.filter((symbol) => symbol === "DRG").length;
+    const columns = new Set<number>();
+
+    if (orbCount >= 4 || scatterCount >= 2 || chestCount >= 2) {
+      columns.add(3);
+    }
+
+    if (orbCount >= 6 || scatterCount >= 3 || (chestCount >= 3 && dragonCount >= 1)) {
+      columns.add(4);
+    }
+
+    return columns;
+  }
+
+  private applyColumnFocus(cards: SymbolCard[], active: boolean): void {
+    for (const card of cards) {
+      this.renderCard(card, active, card.row === 1);
+    }
+  }
+
   private async animateColumnSpin(
     columnIndex: number,
     targetSymbols: string[],
-    timeline: EffectTimeline
+    timeline: EffectTimeline,
+    timing: SpinTimingProfile,
+    anticipation: boolean
   ): Promise<void> {
     const columnRoot = this.columnContainers[columnIndex];
     const cards = this.symbolCards[columnIndex];
@@ -327,12 +434,14 @@ export class ReelController {
       return;
     }
 
-    await timeline.wait(columnIndex * 70);
+    await timeline.wait(columnIndex * timing.startStaggerMs);
 
     const baseY = this.boardY + this.cellHeight * 0.5;
-    const durationMs = 280 + columnIndex * 55;
-    const totalSteps = 6 + columnIndex * 2;
+    const durationMs = timing.spinDurationMs + columnIndex * Math.round(timing.startStaggerMs * 0.55);
+    const totalSteps = timing.symbolCycles + columnIndex;
     let previousStep = -1;
+
+    this.applyColumnFocus(cards, anticipation && columnIndex >= 3);
 
     await timeline.tween(durationMs, (progress) => {
       const step = Math.floor(progress * totalSteps);
@@ -343,12 +452,12 @@ export class ReelController {
         }
       }
 
-      const spinWave = Math.sin(progress * Math.PI * (1.9 + columnIndex * 0.12));
-      const verticalTravel = (1 - progress) * this.cellHeight * 0.34;
+      const spinWave = Math.sin(progress * Math.PI * (2 + columnIndex * 0.16));
+      const verticalTravel = (1 - progress) * this.cellHeight * 0.4;
       columnRoot.y = baseY - spinWave * verticalTravel;
-      columnRoot.scale.x = 1 + (1 - progress) * 0.015;
-      columnRoot.scale.y = 0.92 + progress * 0.08;
-      columnRoot.alpha = 0.7 + progress * 0.3;
+      columnRoot.scale.x = 1 + (1 - progress) * 0.018;
+      columnRoot.scale.y = 0.88 + progress * 0.12;
+      columnRoot.alpha = 0.66 + progress * 0.34;
 
       for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
         const card = cards[rowIndex];
@@ -356,11 +465,23 @@ export class ReelController {
           continue;
         }
 
-        const laneOffset = (1 - progress) * (rowIndex + 1) * 3.2;
-        card.root.y = this.cellHeight * rowIndex - laneOffset * Math.sin(progress * Math.PI * 2 + rowIndex * 0.46);
-        card.root.rotation = (1 - progress) * 0.02 * Math.sin(progress * Math.PI * 6 + rowIndex);
+        const laneOffset = (1 - progress) * (rowIndex + 1) * 4.1;
+        card.root.y =
+          this.cellHeight * rowIndex -
+          laneOffset * Math.sin(progress * Math.PI * 2.4 + rowIndex * 0.48 + columnIndex * 0.22);
+        card.root.rotation = (1 - progress) * 0.026 * Math.sin(progress * Math.PI * 7 + rowIndex + columnIndex * 0.3);
       }
     });
+
+    if (anticipation) {
+      this.applyColumnFocus(cards, true);
+      await timeline.tween(timing.anticipationDelayMs, (progress) => {
+        const pulse = Math.sin(progress * Math.PI);
+        columnRoot.scale.set(1 + pulse * 0.024, 1 - pulse * 0.016);
+        columnRoot.alpha = 0.92 + pulse * 0.08;
+      });
+      await timeline.wait(timing.anticipationHoldMs);
+    }
 
     for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
       const card = cards[rowIndex];
@@ -371,10 +492,10 @@ export class ReelController {
       this.setCardSymbol(card, targetSymbols[rowIndex] ?? randomSymbol(), false);
     }
 
-    await timeline.tween(180, (progress) => {
+    await timeline.tween(timing.settleDurationMs, (progress) => {
       const settleWave = Math.sin(progress * Math.PI);
       const settle = 1 - Math.pow(1 - progress, 3);
-      columnRoot.y = baseY - (1 - settle) * this.cellHeight * 0.16;
+      columnRoot.y = baseY - (1 - settle) * this.cellHeight * (anticipation ? 0.22 : 0.16);
       columnRoot.scale.set(1 + settleWave * 0.018, 1 - settleWave * 0.03);
 
       for (let rowIndex = 0; rowIndex < cards.length; rowIndex += 1) {
@@ -383,7 +504,8 @@ export class ReelController {
           continue;
         }
 
-        card.root.y = this.cellHeight * rowIndex + (rowIndex === 1 ? -2 : 1) * settleWave;
+        const laneWeight = rowIndex === 1 ? -2 : 1;
+        card.root.y = this.cellHeight * rowIndex + laneWeight * settleWave * (anticipation ? 1.4 : 1);
         card.root.rotation = 0;
       }
     });
@@ -401,6 +523,8 @@ export class ReelController {
       card.root.y = this.cellHeight * rowIndex;
       card.root.rotation = 0;
     }
+
+    this.applyColumnFocus(cards, false);
   }
 
   private setCardSymbol(card: SymbolCard, rawSymbol: string, emphasized: boolean): void {

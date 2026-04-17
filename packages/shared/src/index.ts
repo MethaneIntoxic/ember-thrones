@@ -104,8 +104,39 @@ export type {
 
 export * from "./contracts/events";
 export * from "./domain/rng";
-export * from "./domain/reels";
-export * from "./domain/payout";
+export {
+	REEL_COUNT,
+	ROW_COUNT,
+	SLOT_SYMBOLS,
+	MEDIUM_REEL_COMPOSITIONS,
+	MEDIUM_REEL_STRIPS,
+	generateSpin,
+	generateSpinFromSeed,
+	countSymbol,
+	listSymbolPositions,
+	positionToReelRow,
+	symbolAtPosition,
+	toRows,
+} from "./domain/reels";
+export type {
+	SlotSymbol,
+	ReelColumn,
+	SpinColumns,
+	ReelStops,
+	SpinGrid,
+} from "./domain/reels";
+export {
+	DEFAULT_PAYLINES,
+	PAYOUT_TABLE,
+	SCATTER_PAYOUT_MULTIPLIERS,
+	evaluatePaylines,
+} from "./domain/payout";
+export type {
+	PayableSymbol,
+	LinePattern,
+	LineWin,
+	PayoutResult,
+} from "./domain/payout";
 export * from "./domain/features/emberLock";
 export {
 	resolveEmberRespinCollectorLock,

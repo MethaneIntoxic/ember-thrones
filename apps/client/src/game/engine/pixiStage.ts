@@ -1,5 +1,5 @@
 import { Application, Container, Graphics } from "pixi.js";
-import type { BonusType } from "../net/apiClient";
+import type { BonusType, SpinSpeedMode } from "../net/apiClient";
 import { EffectTimeline } from "./effectTimeline";
 import { ReelController } from "./reelController";
 import { SymbolLayer } from "./symbolLayer";
@@ -38,6 +38,8 @@ export class PixiStage {
 
   private readonly effects = new EffectTimeline();
 
+  private spinSpeedMode: SpinSpeedMode = "normal";
+
   public async mount(host: HTMLElement): Promise<void> {
     if (this.app) {
       return;
@@ -73,20 +75,40 @@ export class PixiStage {
     this.resize(width, height);
   }
 
-  public async presentSpinResult(reels: string[][], winLines: number[], winCoins: number): Promise<void> {
+  public setSpinSpeedMode(mode: SpinSpeedMode): void {
+    this.spinSpeedMode = mode;
+  }
+
+  public async presentSpinResult(
+    reels: string[][],
+    winLines: number[],
+    winCoins: number,
+    speedMode: SpinSpeedMode = this.spinSpeedMode
+  ): Promise<void> {
     if (!this.app) {
       return;
     }
 
+    this.effects.dispose();
+    this.reelController.container.scale.set(1, 1);
+    this.reelController.container.rotation = 0;
+    this.reelController.container.alpha = 1;
+
+    this.spinSpeedMode = speedMode;
     this.clearFxLayer();
     this.reelController.setWinTint([]);
     this.symbolLayer.clear();
 
     await this.scanSweep(winCoins > 0 ? 0x8fb8ff : 0x5a789e, winCoins > 0 ? 200 : 140, 0.09);
-    await this.reelController.spinTo(reels, this.effects);
-    this.reelController.setWinTint(winLines);
+    this.symbolLayer.updateLayout(this.reelController.getCellCenters());
+    await this.reelController.spinTo(reels, this.effects, speedMode);
+    await this.reelController.choreographWinLines(winLines, this.effects, speedMode);
 
     this.symbolLayer.updateLayout(this.reelController.getCellCenters());
+    for (const row of Array.from(new Set(winLines))) {
+      this.symbolLayer.renderWinLines([row]);
+      await this.effects.wait(speedMode === "normal" ? 90 : 55);
+    }
     this.symbolLayer.renderWinLines(winLines);
 
     if (winCoins > 0) {
@@ -106,6 +128,11 @@ export class PixiStage {
     if (!this.app) {
       return;
     }
+
+    this.effects.dispose();
+    this.reelController.container.scale.set(1, 1);
+    this.reelController.container.rotation = 0;
+    this.reelController.container.alpha = 1;
 
     this.clearFxLayer();
 

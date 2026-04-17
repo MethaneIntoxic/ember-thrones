@@ -1,24 +1,34 @@
 import { create } from "zustand";
 import {
   apiClient,
+  buildWagerProfile,
+  createBonusPayloadFromSource,
   createSpinRequest,
+  DEFAULT_BASE_GAME_MATH_CONFIG,
+  DEFAULT_WAGER_CONSTRAINTS,
+  getMaxBetSelection,
   RemoteAuthoritativeUnavailableError,
+  type BaseGameMathConfig,
   type BonusPayload,
   type BonusType,
   type ConfigResponse,
   type EmberLockStatus,
+  type FeatureSessionState,
+  type FeatureSessionTransport,
   type FreeQuestStatus,
   type JackpotTier,
   type ProfileResponse,
+  type SpinSpeedMode,
   type SpinResponse,
+  type WagerConstraints,
+  type WagerProfile,
   type WalletState
 } from "../net/apiClient";
 import type { ServerEvent } from "../net/eventClient";
 import {
   drainOfflineSpinQueue,
   enqueueOfflineSpin,
-  getOfflineSpinQueueSnapshot,
-  loadOfflineSpinQueue
+  getOfflineSpinQueueSnapshot
 } from "../platform/offlineSync";
 import { resolveRuntimeCapabilities, type RuntimeCapabilities } from "../platform/runtimePolicy";
 
@@ -36,6 +46,8 @@ export interface ActiveBonusPresentation {
   jackpotTiersHit: BonusPayload["jackpotTiersHit"];
   jackpotAwards: BonusPayload["jackpotAwards"];
   precomputedOutcome: Record<string, unknown>;
+  featureSession: FeatureSessionState;
+  transport: FeatureSessionTransport;
   triggerSpinId: string;
   openedAt: number;
   source: BonusSource;
@@ -99,38 +111,15 @@ function randomSessionId(): string {
   return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function resolveCurrentRuntimeCapabilities(): RuntimeCapabilities {
+  return resolveRuntimeCapabilities({ apiMode: apiClient.mode });
 }
 
-function normalizeBonusType(value: unknown): BonusType | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "EMBER_RESPIN" || normalized === "EMBER_RESPIN_COLLECTOR_LOCK") {
-    return "EMBER_RESPIN";
-  }
-
-  if (normalized === "WHEEL_ASCENSION" || normalized === "CELESTIAL_WHEEL_ASCENSION") {
-    return "WHEEL_ASCENSION";
-  }
-
-  if (normalized === "RELIC_VAULT" || normalized === "RELIC_VAULT_PICK") {
-    return "RELIC_VAULT_PICK";
-  }
-
-  return null;
-}
-
-function toInt(value: unknown, fallback = 0): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(0, Math.floor(parsed));
+function currentWagerConstraints(config: ConfigResponse | null): WagerConstraints {
+  return {
+    minBet: config?.minBet ?? DEFAULT_WAGER_CONSTRAINTS.minBet,
+    maxBet: config?.maxBet ?? DEFAULT_WAGER_CONSTRAINTS.maxBet
+  };
 }
 
 function toBonusPresentation(
@@ -146,6 +135,8 @@ function toBonusPresentation(
     jackpotTiersHit: payload.jackpotTiersHit,
     jackpotAwards: payload.jackpotAwards,
     precomputedOutcome: payload.precomputedOutcome,
+    featureSession: payload.featureSession,
+    transport: payload.transport,
     triggerSpinId: spinId,
     openedAt: Date.now(),
     source
@@ -160,74 +151,12 @@ function upsertBonusSession(
   return [nextSession, ...deduped].slice(0, MAX_BONUS_SESSIONS);
 }
 
-function normalizeEventBonusPayload(rawPayload: unknown): BonusPayload | null {
-  const envelope = isRecord(rawPayload)
-    ? isRecord(rawPayload.bonusPayload)
-      ? rawPayload.bonusPayload
-      : rawPayload
-    : null;
-
-  if (!envelope) {
-    return null;
-  }
-
-  const type = normalizeBonusType(envelope.type);
-  if (!type) {
-    return null;
-  }
-
-  const rawJackpotAwards = Array.isArray(envelope.jackpotAwards) ? envelope.jackpotAwards : [];
-  const jackpotAwards = rawJackpotAwards
-    .map((award) => {
-      if (!isRecord(award)) {
-        return null;
-      }
-
-      const tier = award.tier;
-      if (tier !== "ember" && tier !== "relic" && tier !== "mythic" && tier !== "throne") {
-        return null;
-      }
-
-      return {
-        tier,
-        amount: toInt(award.amount),
-        source: typeof award.source === "string" ? award.source : "event"
-      };
-    })
-    .filter((award): award is BonusPayload["jackpotAwards"][number] => award !== null);
-
-  return {
-    type,
-    sessionId:
-      typeof envelope.sessionId === "string" && envelope.sessionId.length > 0
-        ? envelope.sessionId
-        : `event-${Date.now().toString(36)}`,
-    revealSeed:
-      typeof envelope.revealSeed === "string" && envelope.revealSeed.length > 0
-        ? envelope.revealSeed
-        : `seed-${Math.random().toString(36).slice(2, 10)}`,
-    precomputedOutcome: isRecord(envelope.precomputedOutcome) ? envelope.precomputedOutcome : {},
-    expectedTotalAward: toInt(envelope.expectedTotalAward),
-    jackpotTiersHit: Array.isArray(envelope.jackpotTiersHit)
-      ? envelope.jackpotTiersHit.filter(
-          (tier): tier is JackpotTier =>
-            tier === "ember" || tier === "relic" || tier === "mythic" || tier === "throne"
-        )
-      : jackpotAwards.map((award) => award.tier),
-    jackpotAwards
-  };
-}
-
 interface RuntimeDerivedState {
   runtimeCapabilities: RuntimeCapabilities;
   runtimeSummary: string;
   queueSummary: string;
   queuedSpins: number;
   strandedQueuedSpins: number;
-}
-
-function resolveCurrentRuntimeCapabilities(): RuntimeCapabilities {
-  return resolveRuntimeCapabilities({ apiMode: apiClient.mode });
 }
 
 function describeRuntimeSummary(
@@ -292,6 +221,29 @@ function buildRuntimeDerivedState(eventStreamState: EventStreamState): RuntimeDe
   };
 }
 
+function deriveWagerState(
+  config: ConfigResponse | null,
+  mathConfig: BaseGameMathConfig,
+  selection: Partial<Pick<WagerProfile, "denomination" | "creditsPerSpin" | "speedMode">>
+): Pick<GameStore, "wager" | "bet"> {
+  const wager = buildWagerProfile(mathConfig, selection, currentWagerConstraints(config));
+  return {
+    wager,
+    bet: wager.totalBet
+  };
+}
+
+function nextWagerSelection(
+  current: WagerProfile,
+  updates: Partial<Pick<WagerProfile, "denomination" | "creditsPerSpin" | "speedMode">>
+): Partial<Pick<WagerProfile, "denomination" | "creditsPerSpin" | "speedMode">> {
+  return {
+    denomination: updates.denomination ?? current.denomination,
+    creditsPerSpin: updates.creditsPerSpin ?? current.creditsPerSpin,
+    speedMode: updates.speedMode ?? current.speedMode
+  };
+}
+
 function applySpinToState(
   result: SpinResponse,
   set: (partial: Partial<GameStore>) => void,
@@ -300,28 +252,23 @@ function applySpinToState(
 ): void {
   const current = get();
   const runtimeState = buildRuntimeDerivedState(current.eventStreamState);
-
   const emberTriggered =
     result.triggers.includes("EMBER_RESPIN") || result.triggers.includes("EMBER_LOCK");
   const freeQuestTriggered = result.triggers.includes("FREE_QUEST");
   const relicTriggered = result.triggers.includes("RELIC_VAULT");
   const anyBonusTriggered = result.triggers.includes("BONUS") || result.bonusPayload !== null;
-
   const forgeGain =
     1 +
     Math.floor(result.winCoins / 75) +
     (emberTriggered ? 3 : 0) +
     (freeQuestTriggered ? 2 : 0) +
     (anyBonusTriggered ? 2 : 0);
-
   const relicShardGain = relicTriggered ? 2 : 0;
-
   const nextProgression: ProgressionState = {
     forgeMeter: current.progression.forgeMeter + forgeGain,
     relicShards: current.progression.relicShards + relicShardGain,
     dailyQuestProgress: current.progression.dailyQuestProgress + 1
   };
-
   const nextBonus = result.bonusPayload
     ? toBonusPresentation(result.spinId, result.bonusPayload, "spin")
     : null;
@@ -350,6 +297,8 @@ export interface GameStore {
   sessionId: string;
   profile: ProfileResponse | null;
   config: ConfigResponse | null;
+  mathConfig: BaseGameMathConfig;
+  wager: WagerProfile;
   runtimeCapabilities: RuntimeCapabilities;
   runtimeSummary: string;
   queueSummary: string;
@@ -377,6 +326,10 @@ export interface GameStore {
   setOnlineStatus: (online: boolean) => void;
   setBet: (value: number) => void;
   adjustBet: (delta: number) => void;
+  setDenomination: (value: number) => void;
+  setCreditsPerSpin: (value: number) => void;
+  setSpeedMode: (value: SpinSpeedMode) => void;
+  setMaxBet: () => void;
   dismissBonus: () => void;
   consumeServerEvent: (event: ServerEvent) => void;
 }
@@ -386,11 +339,18 @@ const initialEventStreamState: EventStreamState = initialRuntimeCapabilities.net
   ? "idle"
   : "unavailable";
 const initialRuntimeState = buildRuntimeDerivedState(initialEventStreamState);
+const initialWager = buildWagerProfile(DEFAULT_BASE_GAME_MATH_CONFIG, {
+  denomination: DEFAULT_BASE_GAME_MATH_CONFIG.defaultDenomination,
+  creditsPerSpin: DEFAULT_BASE_GAME_MATH_CONFIG.defaultCreditsPerSpin,
+  speedMode: DEFAULT_BASE_GAME_MATH_CONFIG.speedModes[0]
+});
 
 export const useGameStore = create<GameStore>((set, get) => ({
   sessionId: randomSessionId(),
   profile: null,
   config: null,
+  mathConfig: { ...DEFAULT_BASE_GAME_MATH_CONFIG },
+  wager: initialWager,
   runtimeCapabilities: initialRuntimeState.runtimeCapabilities,
   runtimeSummary: initialRuntimeState.runtimeSummary,
   queueSummary: initialRuntimeState.queueSummary,
@@ -403,7 +363,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   reels: DEFAULT_REELS,
   winLines: [],
   lastWin: 0,
-  bet: 25,
+  bet: initialWager.totalBet,
   spinning: false,
   online: getOnlineStatus(),
   queuedSpins: initialRuntimeState.queuedSpins,
@@ -417,15 +377,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const [profile, config] = await Promise.all([apiClient.getProfile(), apiClient.getConfig()]);
       const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
+      const initialState = deriveWagerState(config, config.mathConfig, {
+        denomination: config.mathConfig.defaultDenomination,
+        creditsPerSpin: config.mathConfig.defaultCreditsPerSpin,
+        speedMode: get().wager.speedMode
+      });
+
       set({
         profile,
         config,
+        mathConfig: config.mathConfig,
         wallet: profile.wallet,
         jackpotLadder: config.jackpotLadder,
-        bet: config.defaultBet,
         online: getOnlineStatus(),
         apiMode: apiClient.mode,
         ...runtimeState,
+        ...initialState,
         error:
           runtimeState.runtimeCapabilities.experience === "disconnected"
             ? "Connected runtime unavailable. Spins will queue for server replay until the API returns."
@@ -451,7 +418,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const online = getOnlineStatus();
     const request = createSpinRequest(
       state.sessionId,
-      state.bet,
+      state.wager,
       state.profile?.playerId ?? "local-dragon"
     );
 
@@ -579,16 +546,62 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   setBet: (value) => {
-    const config = get().config;
-    const minBet = config?.minBet ?? 10;
-    const maxBet = config?.maxBet ?? 500;
-    const normalized = Math.max(minBet, Math.min(maxBet, Math.round(value)));
-    set({ bet: normalized });
+    const state = get();
+    const estimatedCredits = Math.max(1, Math.round(value / Math.max(1, state.wager.denomination)));
+    const nextState = deriveWagerState(
+      state.config,
+      state.mathConfig,
+      nextWagerSelection(state.wager, { creditsPerSpin: estimatedCredits })
+    );
+    set(nextState);
   },
 
   adjustBet: (delta) => {
-    const nextBet = get().bet + delta;
-    get().setBet(nextBet);
+    get().setBet(get().bet + delta);
+  },
+
+  setDenomination: (value) => {
+    const state = get();
+    const nextState = deriveWagerState(
+      state.config,
+      state.mathConfig,
+      nextWagerSelection(state.wager, { denomination: value })
+    );
+    set(nextState);
+  },
+
+  setCreditsPerSpin: (value) => {
+    const state = get();
+    const nextState = deriveWagerState(
+      state.config,
+      state.mathConfig,
+      nextWagerSelection(state.wager, { creditsPerSpin: value })
+    );
+    set(nextState);
+  },
+
+  setSpeedMode: (value) => {
+    const state = get();
+    const nextState = deriveWagerState(
+      state.config,
+      state.mathConfig,
+      nextWagerSelection(state.wager, { speedMode: value })
+    );
+    set(nextState);
+  },
+
+  setMaxBet: () => {
+    const state = get();
+    const maxWager = getMaxBetSelection(state.mathConfig, currentWagerConstraints(state.config));
+    const nextState = deriveWagerState(
+      state.config,
+      state.mathConfig,
+      nextWagerSelection(state.wager, {
+        denomination: maxWager.denomination,
+        creditsPerSpin: maxWager.creditsPerSpin
+      })
+    );
+    set(nextState);
   },
 
   dismissBonus: () => {
@@ -644,16 +657,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
           relicShards: progression.relicShards + 1
         }
       });
+      return;
     }
 
     if (event.type === "bonus") {
-      const payload = normalizeEventBonusPayload(event.payload);
+      const runtimeExperience = get().runtimeCapabilities.experience;
+      const payload = createBonusPayloadFromSource(event.payload, {
+        transport:
+          runtimeExperience === "demo"
+            ? "demo"
+            : event.source === "server"
+              ? "streamed"
+              : "seeded"
+      });
+
       if (!payload) {
         return;
       }
 
       const presentation = toBonusPresentation(`event-${event.ts}`, payload, "event");
-
       set({
         activeBonus: presentation,
         bonusSessions: upsertBonusSession(get().bonusSessions, presentation)

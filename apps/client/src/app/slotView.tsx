@@ -25,10 +25,6 @@ function formatBonusType(type: BonusType): string {
     return "Wheel Ascension";
   }
 
-  if (type === "RELIC_VAULT_PICK") {
-    return "Relic Vault";
-  }
-
   return "Relic Vault";
 }
 
@@ -60,14 +56,27 @@ function runtimeToneClass(experience: RuntimeExperience): string {
   return "is-demo";
 }
 
+function transportLabel(transport: "streamed" | "seeded" | "demo"): string {
+  if (transport === "streamed") {
+    return "Server stream";
+  }
+
+  if (transport === "demo") {
+    return "Demo staging";
+  }
+
+  return "Seeded snapshot";
+}
+
 export function SlotView(): JSX.Element {
   const profile = useGameStore((state) => state.profile);
   const wallet = useGameStore((state) => state.wallet);
   const reels = useGameStore((state) => state.reels);
   const winLines = useGameStore((state) => state.winLines);
   const lastWin = useGameStore((state) => state.lastWin);
-  const bet = useGameStore((state) => state.bet);
   const config = useGameStore((state) => state.config);
+  const mathConfig = useGameStore((state) => state.mathConfig);
+  const wager = useGameStore((state) => state.wager);
   const spinning = useGameStore((state) => state.spinning);
   const online = useGameStore((state) => state.online);
   const queuedSpins = useGameStore((state) => state.queuedSpins);
@@ -80,14 +89,16 @@ export function SlotView(): JSX.Element {
   const jackpotLadder = useGameStore((state) => state.jackpotLadder);
   const emberLock = useGameStore((state) => state.emberLock);
   const freeQuest = useGameStore((state) => state.freeQuest);
-  const progression = useGameStore((state) => state.progression);
   const activeBonus = useGameStore((state) => state.activeBonus);
   const bonusSessions = useGameStore((state) => state.bonusSessions);
 
   const bootstrap = useGameStore((state) => state.bootstrap);
   const spin = useGameStore((state) => state.spin);
   const syncOfflineQueue = useGameStore((state) => state.syncOfflineQueue);
-  const adjustBet = useGameStore((state) => state.adjustBet);
+  const setDenomination = useGameStore((state) => state.setDenomination);
+  const setCreditsPerSpin = useGameStore((state) => state.setCreditsPerSpin);
+  const setSpeedMode = useGameStore((state) => state.setSpeedMode);
+  const setMaxBet = useGameStore((state) => state.setMaxBet);
   const setOnlineStatus = useGameStore((state) => state.setOnlineStatus);
   const dismissBonus = useGameStore((state) => state.dismissBonus);
   const consumeServerEvent = useGameStore((state) => state.consumeServerEvent);
@@ -96,18 +107,19 @@ export function SlotView(): JSX.Element {
   const stageRef = useRef<PixiStage | null>(null);
   const previousSpinsRef = useRef(0);
   const previousBonusSessionRef = useRef<string | null>(null);
+  const autoSpinTimerRef = useRef<number | null>(null);
 
   const [perfLabel, setPerfLabel] = useState("Performance: sampling...");
   const [deferredInstallPrompt, setDeferredInstallPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
+  const [autoSpinArmed, setAutoSpinArmed] = useState(false);
 
   const perfTier = useMemo(() => {
     const deviceMemory =
       typeof navigator !== "undefined" && "deviceMemory" in navigator
         ? Number(navigator.deviceMemory)
         : 4;
-
     const hardwareConcurrency = typeof navigator !== "undefined" ? navigator.hardwareConcurrency : 4;
     return inferPerfTier(window.innerWidth, deviceMemory, hardwareConcurrency);
   }, []);
@@ -144,7 +156,6 @@ export function SlotView(): JSX.Element {
 
   useEffect(() => {
     const cleanupAudioUnlock = installAudioUnlock();
-
     return () => {
       cleanupAudioUnlock();
     };
@@ -215,8 +226,9 @@ export function SlotView(): JSX.Element {
       }
 
       await stage.mount(host);
+      stage.setSpinSpeedMode(wager.speedMode);
       stage.resize(host.clientWidth, host.clientHeight);
-      await stage.presentSpinResult(reels, winLines, lastWin);
+      await stage.presentSpinResult(reels, winLines, lastWin, wager.speedMode);
     };
 
     void mountStage();
@@ -243,8 +255,16 @@ export function SlotView(): JSX.Element {
       return;
     }
 
-    void stageRef.current.presentSpinResult(reels, winLines, lastWin);
-  }, [reels, winLines, lastWin]);
+    stageRef.current.setSpinSpeedMode(wager.speedMode);
+  }, [wager.speedMode]);
+
+  useEffect(() => {
+    if (!stageRef.current) {
+      return;
+    }
+
+    void stageRef.current.presentSpinResult(reels, winLines, lastWin, wager.speedMode);
+  }, [reels, winLines, lastWin, wager.speedMode]);
 
   useEffect(() => {
     if (wallet.lifetimeSpins <= previousSpinsRef.current) {
@@ -290,7 +310,72 @@ export function SlotView(): JSX.Element {
     }
   }, [activeBonus]);
 
-  const onSpin = async (): Promise<void> => {
+  useEffect(() => {
+    if (!activeBonus || !autoSpinArmed) {
+      return;
+    }
+
+    setAutoSpinArmed(false);
+  }, [activeBonus, autoSpinArmed]);
+
+  useEffect(() => {
+    if (wager.speedMode === "auto") {
+      return;
+    }
+
+    setAutoSpinArmed(false);
+  }, [wager.speedMode]);
+
+  useEffect(() => {
+    const clearTimer = (): void => {
+      if (autoSpinTimerRef.current !== null) {
+        window.clearTimeout(autoSpinTimerRef.current);
+        autoSpinTimerRef.current = null;
+      }
+    };
+
+    if (!autoSpinArmed || wager.speedMode !== "auto" || spinning || activeBonus) {
+      clearTimer();
+      return clearTimer;
+    }
+
+    if (!online && runtimeCapabilities.experience !== "demo") {
+      clearTimer();
+      return clearTimer;
+    }
+
+    autoSpinTimerRef.current = window.setTimeout(() => {
+      void handleSpinRequest();
+    }, 420);
+
+    return clearTimer;
+  }, [
+    autoSpinArmed,
+    wager.speedMode,
+    spinning,
+    activeBonus,
+    online,
+    runtimeCapabilities.experience
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSpinTimerRef.current !== null) {
+        window.clearTimeout(autoSpinTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSpinRequest = async (): Promise<void> => {
+    if (wager.speedMode === "auto" && autoSpinArmed && !spinning) {
+      setAutoSpinArmed(false);
+      return;
+    }
+
+    if (wager.speedMode === "auto" && !autoSpinArmed) {
+      setAutoSpinArmed(true);
+    }
+
     audioBus.playSpin();
     await spin();
   };
@@ -317,17 +402,15 @@ export function SlotView(): JSX.Element {
     window.location.reload();
   };
 
-  const minBet = config?.minBet ?? 10;
-  const maxBet = config?.maxBet ?? 500;
-
   return (
     <article className="slot-view">
       <header className="top-banner">
         <div className="title-block">
-          <p className="panel-kicker">Authoritative Dragon-Fantasy Slot</p>
-          <h1>Ember Thrones</h1>
+          <p className="panel-kicker">Vegas-Style 5x3 Cabinet Harness</p>
+          <h1>Dragon Link</h1>
           <p>
-            Reel-triggered bonus volatility with deterministic reveal sessions and jackpot tension.
+            Fixed-geometry reels, denomination-led wagering, credits-per-spin ladders, and feature
+            sessions that distinguish authoritative streams from demo staging.
             {profile ? ` Welcome back, ${profile.nickname}.` : ""}
           </p>
         </div>
@@ -351,6 +434,8 @@ export function SlotView(): JSX.Element {
                 : "Queue replay paused"
               : "Queue replay disabled"}
           </span>
+          <span className="runtime-chip">{mathConfig.reels}x{mathConfig.rows} cabinet</span>
+          <span className="runtime-chip">{mathConfig.fixedLines} fixed lines</span>
         </div>
         <p className="runtime-summary">{runtimeSummary}</p>
         <p className="runtime-queue">{queueSummary}</p>
@@ -363,9 +448,10 @@ export function SlotView(): JSX.Element {
           <Hud
             coins={wallet.coins}
             gems={wallet.gems}
-            bet={bet}
-            minBet={minBet}
-            maxBet={maxBet}
+            wager={wager}
+            mathConfig={mathConfig}
+            minBet={config?.minBet ?? 10}
+            maxBet={config?.maxBet ?? 500}
             spinning={spinning}
             lastWin={lastWin}
             queuedSpins={queuedSpins}
@@ -374,18 +460,22 @@ export function SlotView(): JSX.Element {
             runtimeLabel={runtimeCapabilities.label}
             queueSupported={runtimeCapabilities.offlineQueue.supported}
             queueCanReplayNow={runtimeCapabilities.offlineQueue.canReplayNow}
+            installAvailable={Boolean(deferredInstallPrompt)}
+            updateAvailable={updateReady}
+            autoSpinArmed={autoSpinArmed}
             onSpin={() => {
-              void onSpin();
+              void handleSpinRequest();
             }}
-            onAdjustBet={adjustBet}
+            onSetDenomination={setDenomination}
+            onSetCreditsPerSpin={setCreditsPerSpin}
+            onSetSpeedMode={setSpeedMode}
+            onMaxBet={setMaxBet}
             onSyncQueue={() => {
               void syncOfflineQueue();
             }}
-            installAvailable={Boolean(deferredInstallPrompt)}
             onInstall={() => {
               void onInstall();
             }}
-            updateAvailable={updateReady}
             onApplyUpdate={() => {
               void onApplyUpdate();
             }}
@@ -398,7 +488,6 @@ export function SlotView(): JSX.Element {
           jackpotLadder={jackpotLadder}
           emberLock={emberLock}
           freeQuest={freeQuest}
-          progression={progression}
           activeBonus={activeBonus}
           bonusSessionCount={bonusSessions.length}
           runtimeCapabilities={runtimeCapabilities}
@@ -407,22 +496,23 @@ export function SlotView(): JSX.Element {
           eventStreamState={eventStreamState}
           queuedSpins={queuedSpins}
           strandedQueuedSpins={strandedQueuedSpins}
+          mathConfig={mathConfig}
+          wager={wager}
         />
       </section>
 
       <section className="bonus-showcase">
         <p className={`bonus-tracker ${activeBonus ? "" : "is-idle"}`}>
           {activeBonus
-            ? `Active Bonus: ${formatBonusType(activeBonus.type)} · Seed ${activeBonus.revealSeed.slice(0, 8)} · Source ${activeBonus.source === "event" ? "Server Event" : "Spin Payload"}`
-            : "No bonus active. Trigger Ember Respin, Wheel Ascension, or Relic Vault from the reels."}
+            ? `Active Feature: ${formatBonusType(activeBonus.type)} · ${transportLabel(activeBonus.transport)} · ${activeBonus.featureSession.remainingLabel}`
+            : `No feature active. Grand qualification ${wager.qualifiesForProgressive ? "is live at this wager" : "requires max bet"}.`}
         </p>
-        <p className="bonus-session-count">Tracked Bonus Sessions: {bonusSessions.length}</p>
+        <p className="bonus-session-count">
+          Tracked Sessions: {bonusSessions.length} · Speed {wager.speedMode.toUpperCase()} · Wager {wager.totalBet.toLocaleString()} coins
+        </p>
       </section>
 
-      <BonusPresentationOverlay
-        bonus={activeBonus}
-        onClose={dismissBonus}
-      />
+      <BonusPresentationOverlay bonus={activeBonus} onClose={dismissBonus} />
     </article>
   );
 }

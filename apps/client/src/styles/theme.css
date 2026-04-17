@@ -336,13 +336,127 @@ progress {
   align-items: stretch;
 }
 
-.bet-cluster {
+.bet-cluster,
+.wager-cluster {
   display: grid;
   gap: 0.55rem;
   padding: 0.85rem 0.95rem;
   border-radius: var(--radius-md);
   border: 1px solid rgba(255, 217, 114, 0.14);
   background: rgba(10, 6, 16, 0.34);
+}
+
+.wager-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.wager-summary-grid > div {
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.65rem 0.7rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 217, 114, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wager-summary-grid strong {
+  font-size: 0.96rem;
+}
+
+.control-stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.control-group {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.control-group-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: end;
+}
+
+.control-group-flex {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.choice-chip,
+.max-bet-button {
+  min-height: 38px;
+  padding: 0 0.82rem;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 214, 132, 0.16);
+  font-weight: 700;
+}
+
+.choice-chip.is-active,
+.max-bet-button.is-active {
+  color: #2a1308;
+  background: linear-gradient(180deg, #ffe0a1, #ffb869);
+  border-color: rgba(255, 224, 161, 0.86);
+  box-shadow: 0 0 18px rgba(255, 177, 108, 0.28);
+}
+
+.wager-signal-card {
+  display: grid;
+  gap: 0.48rem;
+  padding: 0.8rem 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 217, 114, 0.14);
+  background: rgba(5, 4, 12, 0.42);
+}
+
+.qualification-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 32px;
+  padding: 0 0.75rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.qualification-pill.is-qualified,
+.bonus-inline-pill.is-qualified {
+  color: #08140b;
+  background: rgba(125, 223, 157, 0.88);
+  border: 1px solid rgba(125, 223, 157, 0.5);
+}
+
+.qualification-pill.is-locked,
+.bonus-inline-pill.is-locked {
+  color: #2c130a;
+  background: rgba(255, 179, 126, 0.88);
+  border: 1px solid rgba(255, 179, 126, 0.48);
+}
+
+.spin-cluster {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+
+.spin-helper-copy {
+  margin: 0;
+  color: var(--ink-muted);
+  line-height: 1.45;
 }
 
 .bet-copy-row,
@@ -386,6 +500,18 @@ progress {
 .bet-range-row {
   color: var(--ink-muted);
   font-size: 0.82rem;
+}
+
+.paytable-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.paytable-row {
+  padding: 0.58rem 0.72rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 214, 132, 0.16);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .bet-track,
@@ -886,6 +1012,11 @@ progress {
   overflow-wrap: anywhere;
 }
 
+.bonus-chip.is-active {
+  border-color: rgba(255, 233, 178, 0.38);
+  background: rgba(255, 222, 160, 0.12);
+}
+
 .ember-cell {
   display: grid;
   gap: 0.2rem;
@@ -1029,6 +1160,14 @@ progress {
 
   .hud-controls,
   .hud-controls-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .wager-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-group-inline {
     grid-template-columns: 1fr;
   }
 

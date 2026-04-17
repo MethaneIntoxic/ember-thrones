@@ -1,19 +1,22 @@
 import { randomUUID } from "node:crypto";
-import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type {
-  BonusActionRecord as SharedBonusActionRecord,
-  BonusActionType,
-  BonusJackpotAward,
-  BonusOutcome,
-  BonusProgress,
-  BonusSessionRecord as SharedBonusSessionRecord,
-  BonusSessionStatus,
-} from "@ember-thrones/shared";
-
-export type VolatilityPreset = "low" | "medium" | "high";
-export type JackpotTier = "ember" | "relic" | "mythic" | "throne";
+import Database from "better-sqlite3";
+import type { BonusJackpotAward, BonusSessionStatus, JackpotTier } from "@ember-thrones/shared";
+import {
+  DEFAULT_MATH_PROFILE_VERSION,
+  DEFAULT_MATH_PROFILE_VERSION_ID,
+  JACKPOT_RESET_AMOUNTS,
+  resolveWagerSelection,
+  type BonusFeatureShell,
+  type MathProfileVersionRecord,
+  type ServerBonusActionType,
+  type ServerBonusOutcome,
+  type ServerBonusProgress,
+  type ServerBonusType,
+  type VolatilityPreset,
+  type WagerProfile,
+} from "./slotRuntime.js";
 
 export interface ProfileRecord {
   id: string;
@@ -51,6 +54,8 @@ export interface SpinPersistInput {
   bet: number;
   totalWin: number;
   payload: Record<string, unknown>;
+  wager: WagerProfile;
+  mathProfileVersionId: string;
 }
 
 export interface SpinRecord {
@@ -60,6 +65,8 @@ export interface SpinRecord {
   bet: number;
   totalWin: number;
   payload: Record<string, unknown>;
+  wager: WagerProfile;
+  mathProfileVersionId: string;
   createdAt: string;
 }
 
@@ -67,6 +74,21 @@ export interface JackpotRecord {
   tier: JackpotTier;
   amount: number;
   updatedAt: string;
+}
+
+export type JackpotEventType = "RESERVED" | "CLAIMED";
+
+export interface JackpotEventRecord {
+  id: string;
+  tier: JackpotTier;
+  eventType: JackpotEventType;
+  amount: number;
+  profileId: string | null;
+  sessionId: string | null;
+  spinId: string | null;
+  bonusSessionId: string | null;
+  mathProfileVersionId: string | null;
+  createdAt: string;
 }
 
 export interface ProfileBootstrap {
@@ -85,6 +107,17 @@ export interface WalletDelta {
   winsDelta?: number;
 }
 
+export interface JackpotEventPersistInput {
+  tier: JackpotTier;
+  eventType: JackpotEventType;
+  amount: number;
+  profileId?: string;
+  sessionId?: string;
+  spinId?: string;
+  bonusSessionId?: string;
+  mathProfileVersionId?: string;
+}
+
 export interface AtomicSpinCommitInput {
   spin: SpinPersistInput;
   walletDelta: WalletDelta;
@@ -93,6 +126,7 @@ export interface AtomicSpinCommitInput {
   jackpotPayoutTier?: JackpotTier;
   jackpotPayoutTiers?: JackpotTier[];
   bonusSession?: BonusSessionCreateInput;
+  jackpotEvents?: JackpotEventPersistInput[];
 }
 
 export interface SessionUpsertInput {
@@ -102,35 +136,66 @@ export interface SessionUpsertInput {
   state?: Record<string, unknown>;
 }
 
-export type BonusSessionRecord = SharedBonusSessionRecord;
-
-export interface BonusSessionCreateInput {
+export interface BonusSessionRecord {
   id: string;
   spinId: string;
   sessionId: string;
   profileId: string;
-  type: BonusSessionRecord["type"];
+  type: ServerBonusType;
   status: BonusSessionStatus;
   revealSeed: string;
   expectedTotalAward: number;
   actualAward: number;
   jackpotTiersHit: JackpotTier[];
   jackpotAwards: BonusJackpotAward[];
-  outcome: BonusOutcome;
-  progress: BonusProgress;
+  outcome: ServerBonusOutcome;
+  progress: ServerBonusProgress;
+  mathProfileVersionId: string;
+  entrySnapshot: BonusFeatureShell;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  claimedAt: string | null;
 }
 
-export type BonusActionRecord = SharedBonusActionRecord;
+export interface BonusSessionCreateInput {
+  id: string;
+  spinId: string;
+  sessionId: string;
+  profileId: string;
+  type: ServerBonusType;
+  status: BonusSessionStatus;
+  revealSeed: string;
+  expectedTotalAward: number;
+  actualAward: number;
+  jackpotTiersHit: JackpotTier[];
+  jackpotAwards: BonusJackpotAward[];
+  outcome: ServerBonusOutcome;
+  progress: ServerBonusProgress;
+  mathProfileVersionId: string;
+  entrySnapshot: BonusFeatureShell;
+}
+
+export interface BonusActionRecord {
+  id: string;
+  bonusSessionId: string;
+  actionType: ServerBonusActionType;
+  ordinal: number;
+  requestPayload: Record<string, unknown>;
+  resultPayload: Record<string, unknown>;
+  createdAt: string;
+}
 
 export interface BonusSessionActionCommitInput {
   bonusSessionId: string;
-  actionType: BonusActionType;
+  actionType: ServerBonusActionType;
   requestPayload: Record<string, unknown>;
   resultPayload: Record<string, unknown>;
-  progress: BonusProgress;
+  progress: ServerBonusProgress;
   status: BonusSessionStatus;
   actualAward: number;
   walletDelta?: WalletDelta;
+  jackpotEvents?: JackpotEventPersistInput[];
 }
 
 export interface BonusSessionActionCommitResult {
@@ -138,13 +203,6 @@ export interface BonusSessionActionCommitResult {
   action: BonusActionRecord;
   wallet: WalletState | null;
 }
-
-const BASE_JACKPOTS: Record<JackpotTier, number> = {
-  ember: 5_000,
-  relic: 25_000,
-  mythic: 100_000,
-  throne: 1_000_000,
-};
 
 type ProfileRow = {
   id: string;
@@ -175,6 +233,8 @@ type SpinRow = {
   bet: number;
   total_win: number;
   payload_json: string;
+  wager_json: string | null;
+  math_profile_version_id: string | null;
   created_at: string;
 };
 
@@ -189,7 +249,7 @@ type BonusSessionRow = {
   spin_id: string;
   session_id: string;
   profile_id: string;
-  type: BonusSessionRecord["type"];
+  type: ServerBonusType;
   status: BonusSessionStatus;
   reveal_seed: string;
   expected_total_award: number;
@@ -198,6 +258,8 @@ type BonusSessionRow = {
   jackpot_awards_json: string;
   outcome_json: string;
   progress_json: string;
+  math_profile_version_id: string | null;
+  entry_snapshot_json: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -207,11 +269,86 @@ type BonusSessionRow = {
 type BonusActionRow = {
   id: string;
   bonus_session_id: string;
-  action_type: BonusActionType;
+  action_type: ServerBonusActionType;
   ordinal: number;
   request_payload_json: string;
   result_payload_json: string;
   created_at: string;
+};
+
+type JackpotEventRow = {
+  id: string;
+  tier: JackpotTier;
+  event_type: JackpotEventType;
+  amount: number;
+  profile_id: string | null;
+  session_id: string | null;
+  spin_id: string | null;
+  bonus_session_id: string | null;
+  math_profile_version_id: string | null;
+  created_at: string;
+};
+
+type MathProfileVersionRow = {
+  id: string;
+  profile_key: string;
+  version_tag: string;
+  reel_set_id: string;
+  checksum: string;
+  description: string;
+  created_at: string;
+};
+
+const defaultEntrySnapshot = (type: ServerBonusType): BonusFeatureShell => ({
+  type,
+  mode: "server-owned",
+  nextAction: "CLAIM",
+  totalRounds: 0,
+  roundsRemaining: 0,
+  intro: "Migrated bonus session shell",
+  progressiveQualified: {
+    grand: false,
+    featureBoost: false,
+  },
+  entryState: {},
+});
+
+const defaultFreeSpinsOutcome: ServerBonusOutcome = {
+  type: "FREE_SPINS",
+  stance: "relic",
+  initialSpins: 0,
+  totalAwardedSpins: 0,
+  retriggerCount: 0,
+  multiplierLadder: [],
+  stickyWildState: [],
+  steps: [],
+  finalAward: 0,
+};
+
+const defaultFreeSpinsProgress: ServerBonusProgress = {
+  type: "FREE_SPINS",
+  spinCursor: 0,
+  totalSpins: 0,
+  revealedSpins: [],
+  runningAward: 0,
+  retriggerCount: 0,
+  spinsRemaining: 0,
+  multiplierLadder: [],
+  completed: true,
+  claimed: false,
+  nextAction: "CLAIM",
+};
+
+const parseJsonObject = <T>(value: string | null | undefined, fallback: T): T => {
+  if (!value) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 };
 
 const toProfileRecord = (row: ProfileRow): ProfileRecord => ({
@@ -231,7 +368,7 @@ const toSessionRecord = (row: SessionRow): SessionRecord => ({
   id: row.id,
   profileId: row.profile_id,
   volatility: row.volatility,
-  state: JSON.parse(row.state_json) as Record<string, unknown>,
+  state: parseJsonObject<Record<string, unknown>>(row.state_json, {}),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -242,7 +379,9 @@ const toSpinRecord = (row: SpinRow): SpinRecord => ({
   profileId: row.profile_id,
   bet: row.bet,
   totalWin: row.total_win,
-  payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+  payload: parseJsonObject<Record<string, unknown>>(row.payload_json, {}),
+  wager: parseJsonObject<WagerProfile>(row.wager_json, resolveWagerSelection({ bet: row.bet })),
+  mathProfileVersionId: row.math_profile_version_id ?? DEFAULT_MATH_PROFILE_VERSION_ID,
   createdAt: row.created_at,
 });
 
@@ -262,10 +401,12 @@ const toBonusSessionRecord = (row: BonusSessionRow): BonusSessionRecord => ({
   revealSeed: row.reveal_seed,
   expectedTotalAward: row.expected_total_award,
   actualAward: row.actual_award,
-  jackpotTiersHit: JSON.parse(row.jackpot_tiers_json) as JackpotTier[],
-  jackpotAwards: JSON.parse(row.jackpot_awards_json) as BonusJackpotAward[],
-  outcome: JSON.parse(row.outcome_json) as BonusOutcome,
-  progress: JSON.parse(row.progress_json) as BonusProgress,
+  jackpotTiersHit: parseJsonObject<JackpotTier[]>(row.jackpot_tiers_json, []),
+  jackpotAwards: parseJsonObject<BonusJackpotAward[]>(row.jackpot_awards_json, []),
+  outcome: parseJsonObject<ServerBonusOutcome>(row.outcome_json, defaultFreeSpinsOutcome),
+  progress: parseJsonObject<ServerBonusProgress>(row.progress_json, defaultFreeSpinsProgress),
+  mathProfileVersionId: row.math_profile_version_id ?? DEFAULT_MATH_PROFILE_VERSION_ID,
+  entrySnapshot: parseJsonObject<BonusFeatureShell>(row.entry_snapshot_json, defaultEntrySnapshot(row.type)),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   completedAt: row.completed_at,
@@ -277,8 +418,31 @@ const toBonusActionRecord = (row: BonusActionRow): BonusActionRecord => ({
   bonusSessionId: row.bonus_session_id,
   actionType: row.action_type,
   ordinal: row.ordinal,
-  requestPayload: JSON.parse(row.request_payload_json) as Record<string, unknown>,
-  resultPayload: JSON.parse(row.result_payload_json) as Record<string, unknown>,
+  requestPayload: parseJsonObject<Record<string, unknown>>(row.request_payload_json, {}),
+  resultPayload: parseJsonObject<Record<string, unknown>>(row.result_payload_json, {}),
+  createdAt: row.created_at,
+});
+
+const toJackpotEventRecord = (row: JackpotEventRow): JackpotEventRecord => ({
+  id: row.id,
+  tier: row.tier,
+  eventType: row.event_type,
+  amount: row.amount,
+  profileId: row.profile_id,
+  sessionId: row.session_id,
+  spinId: row.spin_id,
+  bonusSessionId: row.bonus_session_id,
+  mathProfileVersionId: row.math_profile_version_id,
+  createdAt: row.created_at,
+});
+
+const toMathProfileVersionRecord = (row: MathProfileVersionRow): MathProfileVersionRecord => ({
+  id: row.id,
+  profileKey: row.profile_key,
+  versionTag: row.version_tag,
+  reelSetId: row.reel_set_id,
+  checksum: row.checksum,
+  description: row.description,
   createdAt: row.created_at,
 });
 
@@ -295,6 +459,7 @@ export class ServerDb {
     this.db.pragma("foreign_keys = ON");
     this.initializeSchema();
     this.seedJackpots();
+    this.seedMathProfileVersion();
   }
 
   public close(): void {
@@ -303,24 +468,24 @@ export class ServerDb {
 
   public ensureProfile(input: ProfileBootstrap): ProfileRecord {
     const now = new Date().toISOString();
-    const insert = this.db.prepare(
-      `
-      INSERT OR IGNORE INTO profiles (
-        id, nickname, level, xp, coins, gems, lifetime_spins, lifetime_wins, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-    `,
-    );
-
-    insert.run(
-      input.id,
-      input.nickname,
-      input.level ?? 1,
-      input.xp ?? 0,
-      input.coins ?? 50_000,
-      input.gems ?? 0,
-      now,
-      now,
-    );
+    this.db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO profiles (
+          id, nickname, level, xp, coins, gems, lifetime_spins, lifetime_wins, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+      `,
+      )
+      .run(
+        input.id,
+        input.nickname,
+        input.level ?? 1,
+        input.xp ?? 0,
+        input.coins ?? 50_000,
+        input.gems ?? 0,
+        now,
+        now,
+      );
 
     const profile = this.getProfile(input.id);
     if (!profile) {
@@ -460,8 +625,9 @@ export class ServerDb {
     this.db
       .prepare(
         `
-        INSERT INTO spins (id, session_id, profile_id, bet, total_win, payload_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO spins (
+          id, session_id, profile_id, bet, total_win, payload_json, wager_json, math_profile_version_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -471,6 +637,8 @@ export class ServerDb {
         input.bet,
         input.totalWin,
         JSON.stringify(input.payload),
+        JSON.stringify(input.wager),
+        input.mathProfileVersionId,
         createdAt,
       );
 
@@ -495,13 +663,13 @@ export class ServerDb {
 
   public getLatestBonusSessionForGameSession(
     sessionId: string,
-    statuses?: BonusSessionStatus[]
+    statuses?: BonusSessionStatus[],
   ): BonusSessionRecord | null {
     if (statuses && statuses.length > 0) {
       const placeholders = statuses.map(() => "?").join(", ");
       const row = this.db
         .prepare(
-          `SELECT * FROM bonus_sessions WHERE session_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC LIMIT 1`
+          `SELECT * FROM bonus_sessions WHERE session_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC LIMIT 1`,
         )
         .get(sessionId, ...statuses) as BonusSessionRow | undefined;
 
@@ -523,9 +691,32 @@ export class ServerDb {
     return rows.map((row) => toBonusActionRecord(row));
   }
 
-  public applyBonusSessionAction(
-    input: BonusSessionActionCommitInput
-  ): BonusSessionActionCommitResult {
+  public listJackpotEventsForBonusSession(bonusSessionId: string): JackpotEventRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM jackpot_events WHERE bonus_session_id = ? ORDER BY created_at ASC")
+      .all(bonusSessionId) as JackpotEventRow[];
+
+    return rows.map((row) => toJackpotEventRecord(row));
+  }
+
+  public getMathProfileVersion(profileVersionId: string): MathProfileVersionRecord | null {
+    const row = this.db
+      .prepare("SELECT * FROM math_profile_versions WHERE id = ?")
+      .get(profileVersionId) as MathProfileVersionRow | undefined;
+
+    return row ? toMathProfileVersionRecord(row) : null;
+  }
+
+  public getActiveMathProfileVersion(): MathProfileVersionRecord {
+    const active = this.getMathProfileVersion(DEFAULT_MATH_PROFILE_VERSION_ID);
+    if (!active) {
+      throw new Error("Default math profile version is missing");
+    }
+
+    return active;
+  }
+
+  public applyBonusSessionAction(input: BonusSessionActionCommitInput): BonusSessionActionCommitResult {
     const bonusSession = this.getBonusSession(input.bonusSessionId);
     if (!bonusSession) {
       throw new Error(`Bonus session not found: ${input.bonusSessionId}`);
@@ -538,7 +729,7 @@ export class ServerDb {
     const tx = this.db.transaction(() => {
       const ordinalRow = this.db
         .prepare(
-          "SELECT COALESCE(MAX(ordinal), 0) + 1 AS next_ordinal FROM bonus_actions WHERE bonus_session_id = ?"
+          "SELECT COALESCE(MAX(ordinal), 0) + 1 AS next_ordinal FROM bonus_actions WHERE bonus_session_id = ?",
         )
         .get(input.bonusSessionId) as { next_ordinal: number } | undefined;
 
@@ -550,7 +741,7 @@ export class ServerDb {
           INSERT INTO bonus_actions (
             id, bonus_session_id, action_type, ordinal, request_payload_json, result_payload_json, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `
+        `,
         )
         .run(
           randomUUID(),
@@ -559,7 +750,7 @@ export class ServerDb {
           nextOrdinal,
           JSON.stringify(input.requestPayload),
           JSON.stringify(input.resultPayload),
-          createdAt
+          createdAt,
         );
 
       this.db
@@ -570,7 +761,7 @@ export class ServerDb {
               completed_at = CASE WHEN ? IN ('COMPLETED', 'CLAIMED') AND completed_at IS NULL THEN ? ELSE completed_at END,
               claimed_at = CASE WHEN ? = 'CLAIMED' AND claimed_at IS NULL THEN ? ELSE claimed_at END
           WHERE id = ?
-        `
+        `,
         )
         .run(
           input.status,
@@ -581,11 +772,17 @@ export class ServerDb {
           createdAt,
           input.status,
           createdAt,
-          input.bonusSessionId
+          input.bonusSessionId,
         );
 
       if (input.walletDelta) {
         wallet = this.applyWalletDelta(bonusSession.profileId, input.walletDelta);
+      }
+
+      if (input.jackpotEvents) {
+        for (const event of input.jackpotEvents) {
+          this.insertJackpotEvent(event, createdAt);
+        }
       }
     });
 
@@ -654,7 +851,7 @@ export class ServerDb {
       for (const tier of payoutTiers) {
         this.db
           .prepare("UPDATE jackpots SET amount = ?, updated_at = ? WHERE tier = ?")
-          .run(BASE_JACKPOTS[tier], now, tier);
+          .run(JACKPOT_RESET_AMOUNTS[tier], now, tier);
       }
 
       const nextCoins = Math.max(0, profile.coins + (input.walletDelta.coinsDelta ?? 0));
@@ -675,8 +872,9 @@ export class ServerDb {
       this.db
         .prepare(
           `
-          INSERT INTO spins (id, session_id, profile_id, bet, total_win, payload_json, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO spins (
+            id, session_id, profile_id, bet, total_win, payload_json, wager_json, math_profile_version_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
@@ -686,6 +884,8 @@ export class ServerDb {
           input.spin.bet,
           input.spin.totalWin,
           JSON.stringify(input.spin.payload),
+          JSON.stringify(input.spin.wager),
+          input.spin.mathProfileVersionId,
           now,
         );
 
@@ -696,9 +896,10 @@ export class ServerDb {
             INSERT INTO bonus_sessions (
               id, spin_id, session_id, profile_id, type, status, reveal_seed,
               expected_total_award, actual_award, jackpot_tiers_json, jackpot_awards_json,
-              outcome_json, progress_json, created_at, updated_at, completed_at, claimed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `
+              outcome_json, progress_json, math_profile_version_id, entry_snapshot_json,
+              created_at, updated_at, completed_at, claimed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
           )
           .run(
             input.bonusSession.id,
@@ -714,10 +915,12 @@ export class ServerDb {
             JSON.stringify(input.bonusSession.jackpotAwards),
             JSON.stringify(input.bonusSession.outcome),
             JSON.stringify(input.bonusSession.progress),
+            input.bonusSession.mathProfileVersionId,
+            JSON.stringify(input.bonusSession.entrySnapshot),
             now,
             now,
             input.bonusSession.status === "COMPLETED" ? now : null,
-            input.bonusSession.status === "CLAIMED" ? now : null
+            input.bonusSession.status === "CLAIMED" ? now : null,
           );
 
         this.db
@@ -726,7 +929,7 @@ export class ServerDb {
             INSERT INTO bonus_actions (
               id, bonus_session_id, action_type, ordinal, request_payload_json, result_payload_json, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-          `
+          `,
           )
           .run(
             randomUUID(),
@@ -737,10 +940,16 @@ export class ServerDb {
             JSON.stringify({
               status: input.bonusSession.status,
               nextAction: input.bonusSession.progress.nextAction,
-              expectedTotalAward: input.bonusSession.expectedTotalAward,
+              featureShell: input.bonusSession.entrySnapshot,
             }),
-            now
+            now,
           );
+      }
+
+      if (input.jackpotEvents) {
+        for (const event of input.jackpotEvents) {
+          this.insertJackpotEvent(event, now);
+        }
       }
 
       this.db
@@ -759,7 +968,9 @@ export class ServerDb {
 
   public getJackpots(): JackpotRecord[] {
     const rows = this.db
-      .prepare("SELECT * FROM jackpots ORDER BY CASE tier WHEN 'ember' THEN 1 WHEN 'relic' THEN 2 WHEN 'mythic' THEN 3 ELSE 4 END")
+      .prepare(
+        "SELECT * FROM jackpots ORDER BY CASE tier WHEN 'ember' THEN 1 WHEN 'relic' THEN 2 WHEN 'mythic' THEN 3 ELSE 4 END",
+      )
       .all() as JackpotRow[];
 
     return rows.map((row) => toJackpotRecord(row));
@@ -798,13 +1009,36 @@ export class ServerDb {
 
     this.db
       .prepare("UPDATE jackpots SET amount = ?, updated_at = ? WHERE tier = ?")
-      .run(BASE_JACKPOTS[tier], now, tier);
+      .run(JACKPOT_RESET_AMOUNTS[tier], now, tier);
 
     return {
       tier,
       amount: payoutAmount,
       jackpots: this.getJackpots(),
     };
+  }
+
+  private insertJackpotEvent(input: JackpotEventPersistInput, createdAt: string): void {
+    this.db
+      .prepare(
+        `
+        INSERT INTO jackpot_events (
+          id, tier, event_type, amount, profile_id, session_id, spin_id, bonus_session_id, math_profile_version_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        randomUUID(),
+        input.tier,
+        input.eventType,
+        input.amount,
+        input.profileId ?? null,
+        input.sessionId ?? null,
+        input.spinId ?? null,
+        input.bonusSessionId ?? null,
+        input.mathProfileVersionId ?? null,
+        createdAt,
+      );
   }
 
   private bumpJackpot(tier: JackpotTier, amount: number, timestamp: string): void {
@@ -819,10 +1053,43 @@ export class ServerDb {
       "INSERT OR IGNORE INTO jackpots (tier, amount, updated_at) VALUES (?, ?, ?)",
     );
 
-    insert.run("ember", BASE_JACKPOTS.ember, now);
-    insert.run("relic", BASE_JACKPOTS.relic, now);
-    insert.run("mythic", BASE_JACKPOTS.mythic, now);
-    insert.run("throne", BASE_JACKPOTS.throne, now);
+    insert.run("ember", JACKPOT_RESET_AMOUNTS.ember, now);
+    insert.run("relic", JACKPOT_RESET_AMOUNTS.relic, now);
+    insert.run("mythic", JACKPOT_RESET_AMOUNTS.mythic, now);
+    insert.run("throne", JACKPOT_RESET_AMOUNTS.throne, now);
+  }
+
+  private seedMathProfileVersion(): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO math_profile_versions (
+          id, profile_key, version_tag, reel_set_id, checksum, description, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        DEFAULT_MATH_PROFILE_VERSION.id,
+        DEFAULT_MATH_PROFILE_VERSION.profileKey,
+        DEFAULT_MATH_PROFILE_VERSION.versionTag,
+        DEFAULT_MATH_PROFILE_VERSION.reelSetId,
+        DEFAULT_MATH_PROFILE_VERSION.checksum,
+        DEFAULT_MATH_PROFILE_VERSION.description,
+        now,
+      );
+  }
+
+  private ensureColumn(tableName: string, columnName: string, definition: string): void {
+    const rows = this.db
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all() as Array<{ name: string }>;
+
+    if (rows.some((row) => row.name === columnName)) {
+      return;
+    }
+
+    this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
 
   private initializeSchema(): void {
@@ -857,6 +1124,8 @@ export class ServerDb {
         bet INTEGER NOT NULL,
         total_win INTEGER NOT NULL,
         payload_json TEXT NOT NULL,
+        wager_json TEXT NOT NULL DEFAULT '{}',
+        math_profile_version_id TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(session_id) REFERENCES sessions(id),
         FOREIGN KEY(profile_id) REFERENCES profiles(id)
@@ -866,6 +1135,16 @@ export class ServerDb {
         tier TEXT PRIMARY KEY,
         amount INTEGER NOT NULL,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS math_profile_versions (
+        id TEXT PRIMARY KEY,
+        profile_key TEXT NOT NULL,
+        version_tag TEXT NOT NULL,
+        reel_set_id TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        description TEXT NOT NULL,
+        created_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS bonus_sessions (
@@ -882,6 +1161,8 @@ export class ServerDb {
         jackpot_awards_json TEXT NOT NULL,
         outcome_json TEXT NOT NULL,
         progress_json TEXT NOT NULL,
+        math_profile_version_id TEXT,
+        entry_snapshot_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         completed_at TEXT,
@@ -902,13 +1183,42 @@ export class ServerDb {
         FOREIGN KEY(bonus_session_id) REFERENCES bonus_sessions(id)
       );
 
+      CREATE TABLE IF NOT EXISTS jackpot_events (
+        id TEXT PRIMARY KEY,
+        tier TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        profile_id TEXT,
+        session_id TEXT,
+        spin_id TEXT,
+        bonus_session_id TEXT,
+        math_profile_version_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(profile_id) REFERENCES profiles(id),
+        FOREIGN KEY(session_id) REFERENCES sessions(id),
+        FOREIGN KEY(spin_id) REFERENCES spins(id),
+        FOREIGN KEY(bonus_session_id) REFERENCES bonus_sessions(id)
+      );
+    `);
+
+    this.ensureColumn("spins", "wager_json", "TEXT NOT NULL DEFAULT '{}'");
+    this.ensureColumn("spins", "math_profile_version_id", "TEXT");
+    this.ensureColumn("bonus_sessions", "math_profile_version_id", "TEXT");
+    this.ensureColumn("bonus_sessions", "entry_snapshot_json", "TEXT NOT NULL DEFAULT '{}'");
+
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_profile_id ON sessions(profile_id);
       CREATE INDEX IF NOT EXISTS idx_spins_session_id ON spins(session_id);
       CREATE INDEX IF NOT EXISTS idx_spins_profile_id ON spins(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_spins_math_profile_version_id ON spins(math_profile_version_id);
       CREATE INDEX IF NOT EXISTS idx_bonus_sessions_session_id ON bonus_sessions(session_id);
       CREATE INDEX IF NOT EXISTS idx_bonus_sessions_profile_id ON bonus_sessions(profile_id);
       CREATE INDEX IF NOT EXISTS idx_bonus_sessions_status ON bonus_sessions(status);
+      CREATE INDEX IF NOT EXISTS idx_bonus_sessions_math_profile_version_id ON bonus_sessions(math_profile_version_id);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bonus_actions_bonus_session_ordinal ON bonus_actions(bonus_session_id, ordinal);
+      CREATE INDEX IF NOT EXISTS idx_jackpot_events_bonus_session_id ON jackpot_events(bonus_session_id);
+      CREATE INDEX IF NOT EXISTS idx_jackpot_events_spin_id ON jackpot_events(spin_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_math_profile_versions_profile_key_version_tag ON math_profile_versions(profile_key, version_tag);
     `);
   }
 }
@@ -921,3 +1231,4 @@ export const createServerDb = (options: CreateServerDbOptions = {}): ServerDb =>
   const filePath = options.filePath ?? "./data/server.sqlite";
   return new ServerDb(filePath);
 };
+
