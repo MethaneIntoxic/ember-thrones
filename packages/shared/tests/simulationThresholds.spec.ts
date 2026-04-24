@@ -8,17 +8,17 @@ describe("long-run simulation thresholds", () => {
       spins: 200000,
       betPerSpin: 20,
       seed: 20260411,
-      freeQuestStance: "relic"
+      freeGamesModifierId: "ROYALS_REMOVED"
     });
 
-    expect(report.cadence.emberLockEverySpins.inRange).toBe(true);
-    expect(report.cadence.freeQuestEverySpins.inRange).toBe(true);
+    expect(report.cadence.holdAndSpinEverySpins.inRange).toBe(true);
+    expect(report.cadence.freeGamesEverySpins.inRange).toBe(true);
     expect(report.cadence.retriggerChanceInFeature.inRange).toBe(true);
 
     expect(report.totals.rtp).toBeGreaterThan(0.75);
     expect(report.totals.rtp).toBeLessThan(0.9);
 
-    expect(report.frequencies.anyWin).toBeGreaterThan(0.4);
-    expect(report.frequencies.anyWin).toBeLessThan(0.9);
+    expect(report.frequencies.anyWin).toBeGreaterThan(0.3);
+    expect(report.frequencies.anyWin).toBeLessThan(0.6);
   });
 });

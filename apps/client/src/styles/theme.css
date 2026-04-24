@@ -560,6 +560,11 @@ progress {
   background: linear-gradient(90deg, #8cf0df, #37cdb4);
 }
 
+.feature-card.is-free-games .feature-intensity-bar::-webkit-progress-value,
+.feature-card.is-free-games .feature-intensity-bar::-moz-progress-bar {
+  background: linear-gradient(90deg, #8dc9ff, #4f91f7);
+}
+
 .spin-button,
 .sync-button,
 .install-button,
@@ -665,6 +670,18 @@ progress {
 .bonus-scene.is-relic,
 .bonus-overlay-panel.is-relic {
   border-color: rgba(119, 230, 209, 0.24);
+}
+
+.bonus-card.is-hold-and-spin,
+.bonus-scene.is-hold-and-spin,
+.bonus-overlay-panel.is-hold-and-spin {
+  border-color: rgba(255, 152, 94, 0.26);
+}
+
+.bonus-card.is-free-games,
+.bonus-scene.is-free-games,
+.bonus-overlay-panel.is-free-games {
+  border-color: rgba(124, 195, 255, 0.24);
 }
 
 .bonus-card-header {
@@ -785,6 +802,30 @@ progress {
   color: var(--throne);
   background: rgba(255, 217, 114, 0.12);
   border: 1px solid rgba(255, 217, 114, 0.26);
+}
+
+.tier-mini {
+  color: #ffbf83;
+  background: rgba(255, 122, 66, 0.12);
+  border: 1px solid rgba(255, 122, 66, 0.24);
+}
+
+.tier-minor {
+  color: #8fe8db;
+  background: rgba(77, 214, 216, 0.1);
+  border: 1px solid rgba(77, 214, 216, 0.22);
+}
+
+.tier-major {
+  color: #bda0ff;
+  background: rgba(151, 126, 255, 0.12);
+  border: 1px solid rgba(151, 126, 255, 0.24);
+}
+
+.tier-grand {
+  color: #ffd878;
+  background: rgba(255, 215, 114, 0.12);
+  border: 1px solid rgba(255, 215, 114, 0.28);
 }
 
 .bonus-showcase {
@@ -941,6 +982,17 @@ progress {
   align-items: center;
 }
 
+.scene-status-stack {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: end;
+}
+
+.scene-status-text {
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
 .bonus-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -984,12 +1036,18 @@ progress {
   box-shadow: 0 0 18px rgba(132, 241, 220, 0.52);
 }
 
+.tension-rail.is-free-games .tension-cell.is-hot {
+  box-shadow: 0 0 18px rgba(141, 200, 255, 0.52);
+}
+
 .ember-board,
+.hold-and-spin-board,
 .bonus-chip-grid,
 .wheel-wedges,
 .vault-grid,
 .bonus-beat-grid,
-.wheel-outcomes {
+.wheel-outcomes,
+.free-games-grid {
   display: grid;
   gap: 0.45rem;
 }
@@ -998,12 +1056,18 @@ progress {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.hold-and-spin-board {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .ember-cell,
+.orb-cell,
 .bonus-chip,
 .wheel-wedge,
 .vault-tile,
 .bonus-beat-card,
-.wheel-outcome-card {
+.wheel-outcome-card,
+.free-game-card {
   padding: 0.55rem 0.6rem;
   border-radius: 12px;
   border: 1px solid rgba(255, 214, 132, 0.22);
@@ -1018,6 +1082,12 @@ progress {
 }
 
 .ember-cell {
+  display: grid;
+  gap: 0.2rem;
+  min-height: 90px;
+}
+
+.orb-cell {
   display: grid;
   gap: 0.2rem;
   min-height: 90px;
@@ -1047,7 +1117,8 @@ progress {
 .wheel-wedge,
 .wheel-outcome-card,
 .vault-tile,
-.bonus-beat-card {
+.bonus-beat-card,
+.free-game-card {
   display: grid;
   gap: 0.18rem;
 }
@@ -1061,6 +1132,17 @@ progress {
 
 .vault-grid {
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+
+.free-games-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.modifier-callout {
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 214, 132, 0.14);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .bonus-award {

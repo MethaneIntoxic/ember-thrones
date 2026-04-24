@@ -2,168 +2,39 @@ import { createHash, randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import {
-  resolveCelestialWheelAscension,
-  resolveEmberRespinCollectorLock,
+  countSymbol,
   evaluatePaylines,
+  generateSpin,
+  listSymbolPositions,
+  type BonusPayload,
+  type BonusSessionReference,
+  type GameVariant,
+  type HoldAndSpinStateContract,
+  type FreeGamesStateContract,
   type JackpotTier,
-  type PayoutResult,
-  type LineWin,
-  type SpinGrid,
-  type SlotSymbol,
-  type ReelColumn,
-  type SpinColumns,
+  type SpinResult
 } from "@ember-thrones/shared";
 import { buildBonusSessionSeed, createInitialBonusProgress } from "../lib/bonusSessions.js";
 import { type WalletState } from "../lib/db.js";
 import { signPayload } from "../lib/signature.js";
 import {
-  CREDITS_PER_SPIN_OPTIONS,
+  DEFAULT_GAME_VARIANT,
   DEFAULT_SPEED_MODE,
   DENOMINATION_LADDER,
-  SLOT_GEOMETRY,
+  CREDITS_PER_SPIN_OPTIONS,
   SeededRng,
-  buildFreeSpinsOutcome,
+  SLOT_GEOMETRY,
+  buildFreeGamesOutcome,
   buildRuntimeCapabilities,
   collectJackpotTiersForOutcome,
   createFeatureShell,
   resolveWagerSelection,
   sanitizeBonusOutcomeForWager,
-  type BonusFeatureShell,
   type ServerBonusOutcome,
-  type ServerBonusType,
-  type VolatilityPreset,
-  type WagerProfile,
+  type WagerProfile
 } from "../lib/slotRuntime.js";
 import { createDefaultProfile } from "../seeds/defaultProfile.js";
-
-const SPIN_COLUMNS = SLOT_GEOMETRY.reels;
-const SPIN_ROWS = SLOT_GEOMETRY.rows;
-const JACKPOT_RESET_AMOUNTS: Record<JackpotTier, number> = {
-  ember: 5_000,
-  relic: 25_000,
-  mythic: 100_000,
-  throne: 1_000_000,
-};
-
-type SymbolCode =
-  | "A"
-  | "K"
-  | "Q"
-  | "J"
-  | "10"
-  | "WILD"
-  | "SCATTER"
-  | "ORB"
-  | "DRAGON";
-
-type WinKind = "line" | "feature" | "jackpot";
-
-export interface TriggerFlags {
-  emberRespin: boolean;
-  wheelAscension: boolean;
-  relicVaultPick: boolean;
-  freeQuest: boolean;
-}
-
-export interface SpinWin {
-  kind: WinKind;
-  amount: number;
-  detail: string;
-  lineIndex?: number;
-}
-
-export interface SpinTriggers {
-  holdAndSpin: boolean;
-  freeSpins: boolean;
-  wheel: boolean;
-  progressiveEligible: boolean;
-}
-
-export interface SpinBonusState {
-  holdAndSpin?: {
-    active: boolean;
-    lockedCells: number[];
-    respinsRemaining: number;
-    collectorMultiplier: number;
-  };
-  freeSpins?: {
-    active: boolean;
-    spinsRemaining: number;
-    retriggerCount: number;
-    stance: string;
-  };
-  wheel?: {
-    active: boolean;
-    currentSpin: number;
-    awardedSpins: number;
-    maxSpins: number;
-  };
-}
-
-export interface SpinBonusSessionReference {
-  id: string;
-  type: ServerBonusType;
-  status: string;
-}
-
-export interface SpinResult {
-  spinId: string;
-  profileId: string;
-  sessionId: string;
-  bet: number;
-  linesMode: number;
-  wager: WagerProfile;
-  reels: string[][];
-  wins: SpinWin[];
-  triggers: SpinTriggers;
-  triggerFlags: TriggerFlags;
-  bonusState: SpinBonusState;
-  bonusSessionRef: SpinBonusSessionReference | null;
-  featureShell: BonusFeatureShell | null;
-  bonusPayload: null;
-  totalWin: number;
-  updatedWallet: WalletState;
-  jackpotSnapshotBefore: Record<JackpotTier, number>;
-  jackpotSnapshotAfter: Record<JackpotTier, number>;
-  jackpotLadder: Record<JackpotTier, number>;
-  mathProfileVersion: {
-    id: string;
-    profileKey: string;
-    versionTag: string;
-    reelSetId: string;
-  };
-  runtimeCapabilities: ReturnType<typeof buildRuntimeCapabilities>;
-  signature: string;
-}
-
-interface SpinComputation {
-  reels: SymbolCode[][];
-  wins: SpinWin[];
-  triggers: SpinTriggers;
-  triggerFlags: TriggerFlags;
-  bonusState: SpinBonusState;
-  bonusOutcome: ServerBonusOutcome | null;
-  featureShell: BonusFeatureShell | null;
-  totalWin: number;
-}
-
-interface SharedSpinInput {
-  sessionId: string;
-  profileId: string;
-  wager: WagerProfile;
-  linesMode: number;
-  volatility: VolatilityPreset;
-  clientNonce: string;
-  featureFlags: Record<string, boolean>;
-}
-
-interface ReelAnalysis {
-  flattened: SymbolCode[];
-  orbPositions: number[];
-  orbCount: number;
-  scatterCount: number;
-  dragonCount: number;
-}
+import { resolveEmberRespinCollectorLock } from "@ember-thrones/shared";
 
 const spinBodySchema = z.object({
   profileId: z.string().trim().min(1),
@@ -171,398 +42,115 @@ const spinBodySchema = z.object({
   bet: z.number().int().positive().max(1_000_000).optional(),
   denomination: z.number().int().positive().optional(),
   creditsPerSpin: z.number().int().positive().optional(),
-  linesMode: z.number().int().min(1).max(SLOT_GEOMETRY.paylines).optional(),
   clientNonce: z.string().trim().min(8).max(128),
   volatility: z.enum(["low", "medium", "high"]).optional(),
   speedMode: z.enum(["normal", "turbo", "auto"]).optional(),
-  featureFlags: z.record(z.boolean()).optional(),
   nickname: z.string().trim().min(1).max(24).optional(),
+  gameVariantId: z.string().trim().min(1).optional()
 });
 
-const weightedSymbols: Record<VolatilityPreset, Array<{ symbol: SymbolCode; weight: number }>> = {
-  low: [
-    { symbol: "A", weight: 14 },
-    { symbol: "K", weight: 14 },
-    { symbol: "Q", weight: 14 },
-    { symbol: "J", weight: 14 },
-    { symbol: "10", weight: 12 },
-    { symbol: "WILD", weight: 8 },
-    { symbol: "SCATTER", weight: 5 },
-    { symbol: "ORB", weight: 4 },
-    { symbol: "DRAGON", weight: 5 },
-  ],
-  medium: [
-    { symbol: "A", weight: 13 },
-    { symbol: "K", weight: 13 },
-    { symbol: "Q", weight: 12 },
-    { symbol: "J", weight: 12 },
-    { symbol: "10", weight: 11 },
-    { symbol: "WILD", weight: 8 },
-    { symbol: "SCATTER", weight: 6 },
-    { symbol: "ORB", weight: 8 },
-    { symbol: "DRAGON", weight: 7 },
-  ],
-  high: [
-    { symbol: "A", weight: 11 },
-    { symbol: "K", weight: 11 },
-    { symbol: "Q", weight: 10 },
-    { symbol: "J", weight: 10 },
-    { symbol: "10", weight: 10 },
-    { symbol: "WILD", weight: 9 },
-    { symbol: "SCATTER", weight: 7 },
-    { symbol: "ORB", weight: 11 },
-    { symbol: "DRAGON", weight: 9 },
-  ],
-};
+interface SharedSpinInput {
+  sessionId: string;
+  profileId: string;
+  wager: WagerProfile;
+  clientNonce: string;
+  variant: GameVariant;
+}
 
-const analyzeReels = (reels: SymbolCode[][]): ReelAnalysis => {
-  const flattened: SymbolCode[] = [];
-  const orbPositions: number[] = [];
-  let orbCount = 0;
-  let scatterCount = 0;
-  let dragonCount = 0;
+const buildSeedBase = (input: SharedSpinInput): string =>
+  `${input.sessionId}|${input.profileId}|${input.clientNonce}|${input.wager.totalBet}|${input.variant.id}|${input.wager.speedMode}`;
 
-  for (let columnIndex = 0; columnIndex < reels.length; columnIndex += 1) {
-    const column = reels[columnIndex] ?? [];
-    for (let rowIndex = 0; rowIndex < column.length; rowIndex += 1) {
-      const symbol = column[rowIndex] ?? "A";
-      const flatIndex = columnIndex * SPIN_ROWS + rowIndex;
-      flattened.push(symbol);
+const buildRevealSeed = (input: SharedSpinInput, bonusType: ServerBonusOutcome["type"], gridHash: string): string =>
+  createHash("sha256").update(`${buildSeedBase(input)}|${bonusType}|${gridHash}`).digest("hex");
 
-      if (symbol === "ORB") {
-        orbCount += 1;
-        orbPositions.push(flatIndex);
-      }
-      if (symbol === "SCATTER") {
-        scatterCount += 1;
-      }
-      if (symbol === "DRAGON") {
-        dragonCount += 1;
-      }
-    }
-  }
-
-  return {
-    flattened,
-    orbPositions,
-    orbCount,
-    scatterCount,
-    dragonCount,
-  };
-};
-
-const deriveTriggerFlags = (analysis: ReelAnalysis): TriggerFlags => ({
-  emberRespin: analysis.orbCount >= 6,
-  wheelAscension: analysis.scatterCount >= 4 && analysis.dragonCount >= 1,
-  relicVaultPick: false,
-  freeQuest: analysis.scatterCount >= 3,
-});
-
-const selectPrimaryBonusType = (triggerFlags: TriggerFlags): ServerBonusType | null => {
-  if (triggerFlags.emberRespin) {
-    return "EMBER_RESPIN";
-  }
-  if (triggerFlags.wheelAscension) {
-    return "WHEEL_ASCENSION";
-  }
-  if (triggerFlags.freeQuest) {
-    return "FREE_SPINS";
-  }
-  return null;
-};
-
-const pickWeightedSymbol = (rng: SeededRng, volatility: VolatilityPreset): SymbolCode => {
-  const pool = weightedSymbols[volatility];
-  const totalWeight = pool.reduce((sum, item) => sum + item.weight, 0);
-  const needle = rng.nextFloat() * totalWeight;
-
-  let cursor = 0;
-  for (const item of pool) {
-    cursor += item.weight;
-    if (needle <= cursor) {
-      return item.symbol;
-    }
-  }
-
-  return pool[pool.length - 1]?.symbol ?? "A";
-};
-
-const SERVER_TO_SHARED_SYMBOL: Record<SymbolCode, SlotSymbol> = {
-  "10": "ember",
-  J: "flame",
-  Q: "scale",
-  K: "relic",
-  A: "mythic",
-  DRAGON: "throne",
-  WILD: "wild",
-  ORB: "orb",
-  SCATTER: "scatter",
-};
-
-const toSharedGrid = (reels: SymbolCode[][]): SpinGrid => {
-  const columns = reels.map((column) =>
-    column.map((symbol) => SERVER_TO_SHARED_SYMBOL[symbol]) as ReelColumn
-  ) as unknown as SpinColumns;
-  return { columns, stops: [0, 0, 0, 0, 0] };
-};
-
-const evaluateLineWins = (reels: SymbolCode[][], totalBet: number): SpinWin[] => {
-  const grid = toSharedGrid(reels);
-  const result = evaluatePaylines(grid, totalBet);
-
-  const wins: SpinWin[] = result.lineWins.map((lineWin: LineWin) => ({
-    kind: "line" as WinKind,
-    amount: Math.floor(lineWin.payout),
-    detail: `Line ${lineWin.lineIndex + 1} ${lineWin.symbol} x${lineWin.count}`,
-    lineIndex: lineWin.lineIndex,
-  }));
-
-  if (result.scatterWin > 0) {
-    wins.push({
-      kind: "line" as WinKind,
-      amount: Math.floor(result.scatterWin),
-      detail: `Scatter x${result.scatterCount}`,
-    });
-  }
-
-  return wins;
-};
-
-const buildSeedBase = (input: SharedSpinInput): string => {
-  return `${input.sessionId}|${input.profileId}|${input.clientNonce}|${input.wager.totalBet}|${input.linesMode}|${input.wager.speedMode}`;
-};
-
-const buildRevealSeed = (
-  input: SharedSpinInput,
-  bonusType: ServerBonusType,
-  flattenedReels: SymbolCode[],
-): string => {
-  return createHash("sha256")
-    .update(`${buildSeedBase(input)}|${bonusType}|${flattenedReels.join(",")}`)
-    .digest("hex");
-};
-
-const toJackpotSnapshot = (
-  rows: Array<{ tier: JackpotTier; amount: number }>,
-): Record<JackpotTier, number> => {
-  return rows.reduce<Record<JackpotTier, number>>(
+const toJackpotSnapshot = (rows: Array<{ tier: JackpotTier; amount: number }>): Record<JackpotTier, number> =>
+  rows.reduce<Record<JackpotTier, number>>(
     (acc, row) => {
       acc[row.tier] = row.amount;
       return acc;
     },
-    {
-      ember: 0,
-      relic: 0,
-      mythic: 0,
-      throne: 0,
-    },
+    { mini: 0, minor: 0, major: 0, grand: 0 }
   );
-};
 
 const projectJackpotSnapshotAfter = (
   before: Record<JackpotTier, number>,
   totalBet: number,
   payoutTiers: Set<JackpotTier>,
+  variant: GameVariant
 ): Record<JackpotTier, number> => {
   const contribution = Math.max(1, Math.floor(totalBet * 0.05));
-  const ember = Math.floor(contribution * 0.4);
-  const relic = Math.floor(contribution * 0.3);
-  const mythic = Math.floor(contribution * 0.2);
-  const throne = contribution - ember - relic - mythic;
+  const shares = variant.jackpotConfig.contributionShares;
+  const mini = Math.floor(contribution * shares.mini);
+  const minor = Math.floor(contribution * shares.minor);
+  const major = Math.floor(contribution * shares.major);
+  const grand = contribution - mini - minor - major;
 
   const projected: Record<JackpotTier, number> = {
-    ember: (before.ember ?? 0) + ember,
-    relic: (before.relic ?? 0) + relic,
-    mythic: (before.mythic ?? 0) + mythic,
-    throne: (before.throne ?? 0) + throne,
+    mini: (before.mini ?? 0) + mini,
+    minor: (before.minor ?? 0) + minor,
+    major: (before.major ?? 0) + major,
+    grand: (before.grand ?? 0) + grand
   };
 
   for (const tier of payoutTiers) {
-    const resetAmount = JACKPOT_RESET_AMOUNTS[tier] ?? projected[tier] ?? 0;
-    projected[tier] = resetAmount;
+    projected[tier] = variant.jackpotConfig.resetAmounts[tier];
   }
 
   return projected;
 };
 
-const buildBonusState = (outcome: ServerBonusOutcome | null): SpinBonusState => {
-  if (!outcome) {
-    return {};
-  }
-
-  if (outcome.type === "EMBER_RESPIN") {
-    return {
-      holdAndSpin: {
-        active: true,
-        lockedCells: outcome.startingOrbs.map((orb: (typeof outcome.startingOrbs)[number]) => orb.position),
-        respinsRemaining: 3,
-        collectorMultiplier: 1,
-      },
-    };
-  }
-
-  if (outcome.type === "WHEEL_ASCENSION") {
-    return {
-      wheel: {
-        active: true,
-        currentSpin: 0,
-        awardedSpins: outcome.awardedSpins,
-        maxSpins: outcome.maxSpins,
-      },
-    };
-  }
-
-  return {
-    freeSpins: {
-      active: true,
-      spinsRemaining: outcome.initialSpins,
-      retriggerCount: 0,
-      stance: outcome.stance,
-    },
-  };
-};
-
-const computeSpinOutcome = (input: SharedSpinInput): SpinComputation => {
-  const rng = new SeededRng(buildSeedBase(input));
-  const reels: SymbolCode[][] = Array.from({ length: SPIN_COLUMNS }, () =>
-    Array.from({ length: SPIN_ROWS }, () => pickWeightedSymbol(rng, input.volatility)),
-  );
-  const wins = evaluateLineWins(reels, input.wager.totalBet);
-  const analysis = analyzeReels(reels);
-  const triggerFlags = deriveTriggerFlags(analysis);
-  const selectedBonusType = selectPrimaryBonusType(triggerFlags);
-
-  let bonusOutcome: ServerBonusOutcome | null = null;
-  if (selectedBonusType) {
-    const revealSeed = buildRevealSeed(input, selectedBonusType, analysis.flattened);
-    if (selectedBonusType === "EMBER_RESPIN") {
-      bonusOutcome = resolveEmberRespinCollectorLock({
-        seed: revealSeed,
-        bet: input.wager.totalBet,
-        initialLockedCells: analysis.orbPositions,
-      });
-    } else if (selectedBonusType === "WHEEL_ASCENSION") {
-      bonusOutcome = resolveCelestialWheelAscension({
-        seed: revealSeed,
-        bet: input.wager.totalBet,
-      });
-    } else {
-      bonusOutcome = buildFreeSpinsOutcome({
-        seed: revealSeed,
-        wager: input.wager,
-        triggerScatters: analysis.scatterCount,
-      });
-    }
-    bonusOutcome = sanitizeBonusOutcomeForWager(bonusOutcome, input.wager);
-  }
-
-  if (wins.length === 0 && !selectedBonusType && new SeededRng(`${buildSeedBase(input)}|consolation`).chance(0.14)) {
-    wins.push({
-      kind: "line",
-      amount: Math.max(1, Math.floor(input.wager.totalBet * 0.2)),
-      detail: "Consolation cascade",
-    });
-  }
-
-  return {
-    reels: reels.map((column) => column.slice()),
-    wins,
-    triggers: {
-      holdAndSpin: triggerFlags.emberRespin,
-      freeSpins: triggerFlags.freeQuest,
-      wheel: triggerFlags.wheelAscension,
-      progressiveEligible: input.wager.qualifiesForGrandJackpot,
-    },
-    triggerFlags,
-    bonusState: buildBonusState(bonusOutcome),
-    bonusOutcome,
-    featureShell: bonusOutcome
-      ? createFeatureShell(bonusOutcome, createInitialBonusProgress(bonusOutcome), input.wager)
-      : null,
-    totalWin: wins.reduce((sum, win) => sum + win.amount, 0),
-  };
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === "object" && value !== null;
-};
-
 const spinRoutes: FastifyPluginAsync = async (app) => {
   app.post("/spin", async (request, reply) => {
     const body = spinBodySchema.parse(request.body ?? {});
-
-    const wagerInput: {
-      bet?: number;
-      denomination?: number;
-      creditsPerSpin?: number;
-      speedMode?: WagerProfile["speedMode"];
-    } = {};
-
-    if (body.bet !== undefined) {
-      wagerInput.bet = body.bet;
-    }
-    if (body.denomination !== undefined) {
-      wagerInput.denomination = body.denomination;
-    }
-    if (body.creditsPerSpin !== undefined) {
-      wagerInput.creditsPerSpin = body.creditsPerSpin;
-    }
-    wagerInput.speedMode = body.speedMode ?? DEFAULT_SPEED_MODE;
+    const variant = DEFAULT_GAME_VARIANT;
 
     let wager: WagerProfile;
     try {
-      wager = resolveWagerSelection(wagerInput);
+      wager = resolveWagerSelection({
+        ...(body.bet !== undefined ? { bet: body.bet } : {}),
+        ...(body.denomination !== undefined ? { denomination: body.denomination } : {}),
+        ...(body.creditsPerSpin !== undefined ? { creditsPerSpin: body.creditsPerSpin } : {}),
+        speedMode: body.speedMode ?? DEFAULT_SPEED_MODE
+      });
     } catch (error) {
       return reply.code(400).send({
         message: error instanceof Error ? error.message : "Unsupported wager selection",
         supportedDenominations: [...DENOMINATION_LADDER],
-        supportedCreditsPerSpin: [...CREDITS_PER_SPIN_OPTIONS],
+        supportedCreditsPerSpin: [...CREDITS_PER_SPIN_OPTIONS]
       });
     }
 
     const replayKey = `${body.sessionId}:${body.clientNonce}`;
     if (!app.replayGuard.consume(replayKey)) {
-      return reply.code(409).send({
-        message: "Replay detected for nonce",
-      });
+      return reply.code(409).send({ message: "Replay detected for nonce" });
     }
 
     const profile = app.db.ensureProfile(
       createDefaultProfile({
         id: body.profileId,
-        ...(body.nickname ? { nickname: body.nickname } : {}),
-      }),
+        ...(body.nickname ? { nickname: body.nickname } : {})
+      })
     );
 
     const walletBefore = app.db.getWallet(profile.id);
     if (!walletBefore) {
-      return reply.code(500).send({
-        message: "Unable to load wallet",
-      });
+      return reply.code(500).send({ message: "Unable to load wallet" });
     }
 
     if (walletBefore.coins < wager.totalBet) {
-      return reply.code(400).send({
-        message: "Insufficient coins",
-        wallet: walletBefore,
-        wager,
-      });
+      return reply.code(400).send({ message: "Insufficient coins", wallet: walletBefore, wager });
     }
 
     const existingSession = app.db.getSession(body.sessionId);
     if (existingSession && existingSession.profileId !== profile.id) {
-      return reply.code(409).send({
-        message: "Session belongs to another profile",
-      });
+      return reply.code(409).send({ message: "Session belongs to another profile" });
     }
 
-    const activeBonusSessionRef = isRecord(existingSession?.state)
-      ? existingSession.state.activeBonusSessionRef
-      : undefined;
-    if (isRecord(activeBonusSessionRef) && typeof activeBonusSessionRef.id === "string") {
+    const activeBonusSessionRef = existingSession?.state?.activeBonusSessionRef;
+    if (typeof activeBonusSessionRef === "object" && activeBonusSessionRef && "id" in activeBonusSessionRef) {
       return reply.code(409).send({
         message: "Session has an active streamed bonus. Resume or claim it before spinning again.",
-        activeBonusSessionRef,
+        activeBonusSessionRef
       });
     }
 
@@ -570,28 +158,82 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
       id: body.sessionId,
       profileId: profile.id,
       volatility: body.volatility ?? existingSession?.volatility ?? "medium",
-      state: existingSession?.state ?? {},
+      state: existingSession?.state ?? {}
     });
 
-    const linesMode = SLOT_GEOMETRY.paylines;
-    const mathProfileVersion = app.db.getActiveMathProfileVersion();
-    const runtimeCapabilities = buildRuntimeCapabilities();
     const sharedInput: SharedSpinInput = {
       sessionId: session.id,
       profileId: profile.id,
       wager,
-      linesMode,
-      volatility: session.volatility,
       clientNonce: body.clientNonce,
-      featureFlags: body.featureFlags ?? {},
+      variant
     };
-    const outcome = computeSpinOutcome(sharedInput);
+
+    const rng = new SeededRng(buildSeedBase(sharedInput));
+    const spinGrid = generateSpin(rng);
+    const payout = evaluatePaylines(spinGrid, wager.totalBet);
+    const orbCount = countSymbol(spinGrid, "orb");
+    const scatterCount = countSymbol(spinGrid, "scatter");
+    const triggerFlags = {
+      holdAndSpin: orbCount >= variant.orbTriggerConfig.minOrbs,
+      freeGames: scatterCount >= variant.scatterTriggerConfig.minScatters
+    };
+
+    const gridColumns = spinGrid.columns.map((column: (typeof spinGrid.columns)[number]) => [...column]);
+    const gridHash = createHash("sha256").update(JSON.stringify(gridColumns)).digest("hex");
+
+    let bonusOutcome: ServerBonusOutcome | null = null;
+    if (triggerFlags.holdAndSpin) {
+      bonusOutcome = resolveEmberRespinCollectorLock({
+        seed: buildRevealSeed(sharedInput, "HOLD_AND_SPIN", gridHash),
+        bet: wager.totalBet,
+        initialLockedCells: listSymbolPositions(spinGrid, "orb"),
+        gameVariantId: variant.id
+      });
+    } else if (triggerFlags.freeGames) {
+      bonusOutcome = buildFreeGamesOutcome({
+        seed: buildRevealSeed(sharedInput, "FREE_GAMES", gridHash),
+        wager,
+        triggerScatters: scatterCount,
+        modifierId: variant.freeGamesModifierId,
+        gameVariantId: variant.id
+      });
+    }
+
+    if (bonusOutcome) {
+      bonusOutcome = sanitizeBonusOutcomeForWager(bonusOutcome, wager);
+    }
+
+    const holdAndSpinState: HoldAndSpinStateContract | undefined =
+      bonusOutcome?.type === "HOLD_AND_SPIN"
+        ? {
+            active: true,
+            lockedCount: bonusOutcome.startingOrbs.length,
+            respinsRemaining: 3,
+            filledPositions: bonusOutcome.startingOrbs.map((orb: (typeof bonusOutcome.startingOrbs)[number]) => orb.position)
+          }
+        : undefined;
+
+    const freeGamesState: FreeGamesStateContract | undefined =
+      bonusOutcome?.type === "FREE_GAMES"
+        ? {
+            active: true,
+            modifierId: bonusOutcome.modifierId,
+            gamesRemaining: bonusOutcome.initialGames,
+            retriggerCount: 0,
+            totalAwardedGames: bonusOutcome.totalAwardedGames
+          }
+        : undefined;
 
     const spinId = randomUUID();
+    const mathProfileVersion = app.db.getActiveMathProfileVersion();
     const jackpotSnapshotBefore = toJackpotSnapshot(app.db.getJackpots());
     const jackpotPayoutTierSet = new Set<JackpotTier>();
-    let bonusSessionRef: SpinBonusSessionReference | null = null;
+
+    let bonusSessionRef: BonusSessionReference | null = null;
+    let bonusPayload: BonusPayload | null = null;
     let reservedBonusSession: ReturnType<typeof buildBonusSessionSeed> | null = null;
+    let featureShell = null;
     let jackpotEvents: Array<{
       tier: JackpotTier;
       eventType: "RESERVED";
@@ -603,47 +245,58 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
       mathProfileVersionId: string;
     }> = [];
 
-    if (outcome.bonusOutcome && outcome.featureShell) {
-      const reelAnalysis = analyzeReels(outcome.reels);
-      const jackpotTiers = collectJackpotTiersForOutcome(outcome.bonusOutcome);
-      const jackpotAwards = jackpotTiers.map((tier) => ({
+    if (bonusOutcome) {
+      const jackpotTiersHit = collectJackpotTiersForOutcome(bonusOutcome);
+      const jackpotAwards = jackpotTiersHit.map((tier) => ({
         tier,
         amount: jackpotSnapshotBefore[tier] ?? 0,
-        source:
-          outcome.bonusOutcome.type === "EMBER_RESPIN"
-            ? "hold_and_spin"
-            : outcome.bonusOutcome.type === "WHEEL_ASCENSION"
-              ? "wheel"
-              : "free_spins",
+        source: bonusOutcome.type === "HOLD_AND_SPIN" ? "hold_and_spin" : "free_games"
       }));
 
       for (const award of jackpotAwards) {
         jackpotPayoutTierSet.add(award.tier);
       }
 
-      const createdBonusSessionRef: SpinBonusSessionReference = {
+      bonusSessionRef = {
         id: randomUUID(),
-        type: outcome.bonusOutcome.type,
-        status: "PENDING",
+        type: bonusOutcome.type,
+        status: "PENDING"
       };
-      bonusSessionRef = createdBonusSessionRef;
+
+      const progress = createInitialBonusProgress(bonusOutcome);
+      featureShell = createFeatureShell(bonusOutcome, progress, wager);
+      const expectedTotalAward =
+        bonusOutcome.finalAward + jackpotAwards.reduce((sum, award) => sum + award.amount, 0);
+
+      bonusPayload = {
+        type: bonusOutcome.type,
+        sessionId: bonusSessionRef.id,
+        revealSeed: buildRevealSeed(sharedInput, bonusOutcome.type, gridHash),
+        gameVariantId: variant.id,
+        freeGamesModifierId: variant.freeGamesModifierId,
+        expectedTotalAward,
+        jackpotTiersHit,
+        jackpotAwards,
+        jackpotConfig: variant.jackpotConfig,
+        orbTriggerConfig: variant.orbTriggerConfig,
+        scatterTriggerConfig: variant.scatterTriggerConfig,
+        precomputedOutcome: bonusOutcome
+      };
 
       reservedBonusSession = buildBonusSessionSeed({
-        id: createdBonusSessionRef.id,
+        id: bonusSessionRef.id,
         spinId,
         sessionId: session.id,
         profileId: profile.id,
-        revealSeed: buildRevealSeed(sharedInput, outcome.bonusOutcome.type, reelAnalysis.flattened),
-        expectedTotalAward:
-          outcome.bonusOutcome.finalAward + jackpotAwards.reduce((sum, award) => sum + award.amount, 0),
-        jackpotTiersHit: jackpotTiers,
+        revealSeed: bonusPayload.revealSeed,
+        expectedTotalAward,
+        jackpotTiersHit,
         jackpotAwards,
-        outcome: outcome.bonusOutcome,
+        outcome: bonusOutcome,
         mathProfileVersionId: mathProfileVersion.id,
-        entrySnapshot: outcome.featureShell,
+        entrySnapshot: featureShell
       });
 
-      createdBonusSessionRef.status = reservedBonusSession.status;
       jackpotEvents = jackpotAwards
         .filter((award) => award.amount > 0)
         .map((award) => ({
@@ -653,59 +306,86 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
           profileId: profile.id,
           sessionId: session.id,
           spinId,
-          bonusSessionId: createdBonusSessionRef.id,
-          mathProfileVersionId: mathProfileVersion.id,
+          bonusSessionId: bonusSessionRef!.id,
+          mathProfileVersionId: mathProfileVersion.id
         }));
     }
 
-    const totalWin = outcome.totalWin;
+    const baseWin = Math.floor(payout.totalWin);
+    const featureWin = 0;
+    const totalWin = baseWin + featureWin;
     const jackpotSnapshotAfter = projectJackpotSnapshotAfter(
       jackpotSnapshotBefore,
       wager.totalBet,
       jackpotPayoutTierSet,
+      variant
     );
 
-    const updatedWallet: WalletState = {
+    const wallet: WalletState = {
       coins: Math.max(0, walletBefore.coins - wager.totalBet + totalWin),
       gems: walletBefore.gems,
       lifetimeSpins: walletBefore.lifetimeSpins + 1,
-      lifetimeWins: walletBefore.lifetimeWins + totalWin,
+      lifetimeWins: walletBefore.lifetimeWins + totalWin
     };
 
-    const unsignedResult: Omit<SpinResult, "signature"> = {
+    const runtimeCapabilities = buildRuntimeCapabilities();
+    const unsignedResult: SpinResult & {
+      profileId: string;
+      wallet: WalletState;
+      wager: WagerProfile;
+      reels: string[][];
+      jackpotLadder: Record<JackpotTier, number>;
+      runtimeCapabilities: ReturnType<typeof buildRuntimeCapabilities>;
+      mathProfileVersion: {
+        id: string;
+        profileKey: string;
+        versionTag: string;
+        reelSetId: string;
+      };
+    } = {
       spinId,
       profileId: profile.id,
       sessionId: session.id,
       bet: wager.totalBet,
-      linesMode,
-      wager,
-      reels: outcome.reels.map((column) => column.slice()),
-      wins: outcome.wins,
-      triggers: outcome.triggers,
-      triggerFlags: outcome.triggerFlags,
-      bonusState: outcome.bonusState,
-      bonusSessionRef,
-      featureShell: outcome.featureShell,
-      bonusPayload: null,
+      grid: spinGrid.columns,
+      reels: gridColumns,
+      lineWins: payout.lineWins.map((lineWin: (typeof payout.lineWins)[number]) => ({
+        lineIndex: lineWin.lineIndex,
+        symbol: lineWin.symbol,
+        count: lineWin.count,
+        multiplier: lineWin.multiplier,
+        payout: lineWin.payout
+      })),
+      scatterCount,
+      orbCount,
+      baseWin,
+      featureWin,
       totalWin,
-      updatedWallet,
-      jackpotSnapshotBefore,
-      jackpotSnapshotAfter,
+      triggers: triggerFlags,
+      gameVariantId: variant.id,
+      freeGamesModifierId: variant.freeGamesModifierId,
+      jackpotConfig: variant.jackpotConfig,
+      orbTriggerConfig: variant.orbTriggerConfig,
+      scatterTriggerConfig: variant.scatterTriggerConfig,
+      holdAndSpinState,
+      freeGamesState,
+      bonusSessionRef,
+      bonusPayload,
+      signature: "",
+      wallet,
+      wager,
       jackpotLadder: jackpotSnapshotAfter,
+      runtimeCapabilities,
       mathProfileVersion: {
         id: mathProfileVersion.id,
         profileKey: mathProfileVersion.profileKey,
         versionTag: mathProfileVersion.versionTag,
-        reelSetId: mathProfileVersion.reelSetId,
-      },
-      runtimeCapabilities,
+        reelSetId: mathProfileVersion.reelSetId
+      }
     };
 
     const signature = signPayload(unsignedResult, app.signatureSecret);
-    const response: SpinResult = {
-      ...unsignedResult,
-      signature,
-    };
+    unsignedResult.signature = signature;
 
     app.db.commitSpinAtomic({
       spin: {
@@ -714,14 +394,14 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
         profileId: profile.id,
         bet: wager.totalBet,
         totalWin,
-        payload: response as unknown as Record<string, unknown>,
+        payload: unsignedResult as unknown as Record<string, unknown>,
         wager,
-        mathProfileVersionId: mathProfileVersion.id,
+        mathProfileVersionId: mathProfileVersion.id
       },
       walletDelta: {
         coinsDelta: totalWin - wager.totalBet,
         spinsDelta: 1,
-        winsDelta: totalWin,
+        winsDelta: totalWin
       },
       sessionState: {
         ...(session.state ?? {}),
@@ -731,12 +411,12 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
         runtimeMode: runtimeCapabilities.mode,
         mathProfileVersionId: mathProfileVersion.id,
         activeBonusSessionRef: bonusSessionRef,
-        lastBonusSessionRef: bonusSessionRef,
+        lastBonusSessionRef: bonusSessionRef
       },
       jackpotContributionBet: wager.totalBet,
       jackpotPayoutTiers: [...jackpotPayoutTierSet],
       ...(reservedBonusSession ? { bonusSession: reservedBonusSession } : {}),
-      ...(jackpotEvents.length > 0 ? { jackpotEvents } : {}),
+      ...(jackpotEvents.length > 0 ? { jackpotEvents } : {})
     });
 
     if (bonusSessionRef) {
@@ -746,13 +426,12 @@ const spinRoutes: FastifyPluginAsync = async (app) => {
         bonusSessionId: bonusSessionRef.id,
         bonusType: bonusSessionRef.type,
         status: bonusSessionRef.status,
-        streamMode: "server-owned",
+        streamMode: "server-owned"
       });
     }
 
-    return response;
+    return unsignedResult;
   });
 };
 
 export default spinRoutes;
-

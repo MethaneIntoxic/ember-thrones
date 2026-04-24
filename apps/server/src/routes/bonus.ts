@@ -4,53 +4,41 @@ import {
   advanceBonusSession,
   claimBonusSession,
   resumeBonusSession,
-  serializeBonusSessionSnapshot,
+  serializeBonusSessionSnapshot
 } from "../lib/bonusSessions.js";
 import type { BonusSessionRecord } from "../lib/db.js";
 import type { ServerBonusAdvanceActionType, ServerBonusType } from "../lib/slotRuntime.js";
 
 const paramsWithBonusSessionIdSchema = z.object({
-  bonusSessionId: z.string().trim().min(1),
+  bonusSessionId: z.string().trim().min(1)
 });
 
 const paramsWithSessionIdSchema = z.object({
-  sessionId: z.string().trim().min(1),
+  sessionId: z.string().trim().min(1)
 });
 
 const bonusActionSchema = z.object({
-  actionType: z.enum(["RESPIN", "WHEEL_STOP", "PICK", "FREE_SPIN"]),
-  clientSelection: z.record(z.unknown()).optional(),
+  actionType: z.enum(["RESPIN", "FREE_GAME_SPIN"]),
+  clientSelection: z.record(z.unknown()).optional()
 });
 
 const resumableStatuses = ["PENDING", "ACTIVE", "COMPLETED"] as const;
 
 const expectedActionByType: Record<ServerBonusType, ServerBonusAdvanceActionType> = {
-  EMBER_RESPIN: "RESPIN",
-  FREE_SPINS: "FREE_SPIN",
-  RELIC_VAULT_PICK: "PICK",
-  WHEEL_ASCENSION: "WHEEL_STOP",
+  HOLD_AND_SPIN: "RESPIN",
+  FREE_GAMES: "FREE_GAME_SPIN"
 };
 
-const buildReference = (session: {
-  id: string;
-  type: string;
-  status: string;
-}) => ({
+const buildReference = (session: { id: string; type: string; status: string }) => ({
   id: session.id,
   type: session.type,
-  status: session.status,
+  status: session.status
 });
 
 const syncSessionBonusState = (
   app: Parameters<FastifyPluginAsync>[0],
-  bonusSession: {
-    id: string;
-    sessionId: string;
-    type: string;
-    status: string;
-    updatedAt: string;
-  },
-  lastActionType: string,
+  bonusSession: { id: string; sessionId: string; type: string; status: string; updatedAt: string },
+  lastActionType: string
 ): void => {
   const gameSession = app.db.getSession(bonusSession.sessionId);
   if (!gameSession) {
@@ -60,12 +48,10 @@ const syncSessionBonusState = (
   app.db.updateSessionState(gameSession.id, {
     ...gameSession.state,
     activeBonusSessionRef:
-      bonusSession.status === "CLAIMED" || bonusSession.status === "EXPIRED"
-        ? null
-        : buildReference(bonusSession),
+      bonusSession.status === "CLAIMED" || bonusSession.status === "EXPIRED" ? null : buildReference(bonusSession),
     lastBonusSessionRef: buildReference(bonusSession),
     lastBonusActionType: lastActionType,
-    lastBonusUpdatedAt: bonusSession.updatedAt,
+    lastBonusUpdatedAt: bonusSession.updatedAt
   });
 };
 
@@ -77,7 +63,7 @@ const loadSnapshot = (app: Parameters<FastifyPluginAsync>[0], bonusSessionId: st
 
   return {
     session,
-    actions: app.db.listBonusActions(bonusSessionId),
+    actions: app.db.listBonusActions(bonusSessionId)
   };
 };
 
@@ -85,7 +71,7 @@ const advanceSession = (
   app: Parameters<FastifyPluginAsync>[0],
   snapshot: { session: BonusSessionRecord },
   actionType: ServerBonusAdvanceActionType,
-  clientSelection?: Record<string, unknown>,
+  clientSelection?: Record<string, unknown>
 ) => {
   const expectedAction = expectedActionByType[snapshot.session.type];
   if (expectedAction !== actionType) {
@@ -100,7 +86,7 @@ const advanceSession = (
     resultPayload: mutation.resultPayload,
     progress: mutation.progress,
     status: mutation.status,
-    actualAward: mutation.actualAward,
+    actualAward: mutation.actualAward
   });
 
   syncSessionBonusState(app, result.session, actionType);
@@ -111,14 +97,14 @@ const advanceSession = (
     bonusSessionId: result.session.id,
     bonusType: result.session.type,
     actionType,
-    status: result.session.status,
+    status: result.session.status
   });
 
   return serializeBonusSessionSnapshot({
     session: result.session,
     actions: app.db.listBonusActions(result.session.id),
     action: result.action,
-    wallet: result.wallet,
+    wallet: result.wallet
   });
 };
 
@@ -128,14 +114,12 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
     const session = app.db.getLatestBonusSessionForGameSession(params.sessionId, [...resumableStatuses]);
 
     if (!session) {
-      return reply.code(404).send({
-        message: "No resumable bonus session for game session",
-      });
+      return reply.code(404).send({ message: "No resumable bonus session for game session" });
     }
 
     return serializeBonusSessionSnapshot({
       session,
-      actions: app.db.listBonusActions(session.id),
+      actions: app.db.listBonusActions(session.id)
     });
   });
 
@@ -144,14 +128,12 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
     const snapshot = loadSnapshot(app, params.bonusSessionId);
 
     if (!snapshot) {
-      return reply.code(404).send({
-        message: "Bonus session not found",
-      });
+      return reply.code(404).send({ message: "Bonus session not found" });
     }
 
     return serializeBonusSessionSnapshot({
       session: snapshot.session,
-      actions: snapshot.actions,
+      actions: snapshot.actions
     });
   });
 
@@ -160,9 +142,7 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
     const snapshot = loadSnapshot(app, params.bonusSessionId);
 
     if (!snapshot) {
-      return reply.code(404).send({
-        message: "Bonus session not found",
-      });
+      return reply.code(404).send({ message: "Bonus session not found" });
     }
 
     try {
@@ -174,29 +154,20 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
         resultPayload: mutation.resultPayload,
         progress: mutation.progress,
         status: mutation.status,
-        actualAward: mutation.actualAward,
+        actualAward: mutation.actualAward
       });
 
       syncSessionBonusState(app, result.session, "RESUME");
-
-      app.eventBus.publish("bonus", {
-        profileId: result.session.profileId,
-        sessionId: result.session.sessionId,
-        bonusSessionId: result.session.id,
-        bonusType: result.session.type,
-        actionType: "RESUME",
-        status: result.session.status,
-      });
 
       return serializeBonusSessionSnapshot({
         session: result.session,
         actions: app.db.listBonusActions(result.session.id),
         action: result.action,
-        wallet: result.wallet,
+        wallet: result.wallet
       });
     } catch (error) {
       return reply.code(409).send({
-        message: error instanceof Error ? error.message : "Failed to resume bonus session",
+        message: error instanceof Error ? error.message : "Failed to resume bonus session"
       });
     }
   });
@@ -213,7 +184,24 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
       return advanceSession(app, snapshot, "RESPIN");
     } catch (error) {
       return reply.code(409).send({
-        message: error instanceof Error ? error.message : "Failed to advance hold-and-spin session",
+        message: error instanceof Error ? error.message : "Failed to advance hold-and-spin session"
+      });
+    }
+  });
+
+  app.post("/bonus/:bonusSessionId/free-games/step", async (request, reply) => {
+    const params = paramsWithBonusSessionIdSchema.parse(request.params ?? {});
+    const snapshot = loadSnapshot(app, params.bonusSessionId);
+
+    if (!snapshot) {
+      return reply.code(404).send({ message: "Bonus session not found" });
+    }
+
+    try {
+      return advanceSession(app, snapshot, "FREE_GAME_SPIN");
+    } catch (error) {
+      return reply.code(409).send({
+        message: error instanceof Error ? error.message : "Failed to advance free-games session"
       });
     }
   });
@@ -227,27 +215,10 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      return advanceSession(app, snapshot, "FREE_SPIN");
+      return advanceSession(app, snapshot, "FREE_GAME_SPIN");
     } catch (error) {
       return reply.code(409).send({
-        message: error instanceof Error ? error.message : "Failed to advance free-spins session",
-      });
-    }
-  });
-
-  app.post("/bonus/:bonusSessionId/wheel/step", async (request, reply) => {
-    const params = paramsWithBonusSessionIdSchema.parse(request.params ?? {});
-    const snapshot = loadSnapshot(app, params.bonusSessionId);
-
-    if (!snapshot) {
-      return reply.code(404).send({ message: "Bonus session not found" });
-    }
-
-    try {
-      return advanceSession(app, snapshot, "WHEEL_STOP");
-    } catch (error) {
-      return reply.code(409).send({
-        message: error instanceof Error ? error.message : "Failed to advance wheel session",
+        message: error instanceof Error ? error.message : "Failed to advance free-games session"
       });
     }
   });
@@ -258,16 +229,14 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
     const snapshot = loadSnapshot(app, params.bonusSessionId);
 
     if (!snapshot) {
-      return reply.code(404).send({
-        message: "Bonus session not found",
-      });
+      return reply.code(404).send({ message: "Bonus session not found" });
     }
 
     try {
       return advanceSession(app, snapshot, body.actionType, body.clientSelection);
     } catch (error) {
       return reply.code(409).send({
-        message: error instanceof Error ? error.message : "Failed to advance bonus session",
+        message: error instanceof Error ? error.message : "Failed to advance bonus session"
       });
     }
   });
@@ -277,9 +246,7 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
     const snapshot = loadSnapshot(app, params.bonusSessionId);
 
     if (!snapshot) {
-      return reply.code(404).send({
-        message: "Bonus session not found",
-      });
+      return reply.code(404).send({ message: "Bonus session not found" });
     }
 
     try {
@@ -294,7 +261,7 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
           sessionId: snapshot.session.sessionId,
           spinId: snapshot.session.spinId,
           bonusSessionId: snapshot.session.id,
-          mathProfileVersionId: snapshot.session.mathProfileVersionId,
+          mathProfileVersionId: snapshot.session.mathProfileVersionId
         }));
 
       const result = app.db.applyBonusSessionAction({
@@ -307,9 +274,9 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
         actualAward: mutation.actualAward,
         walletDelta: {
           coinsDelta: mutation.actualAward,
-          winsDelta: mutation.actualAward,
+          winsDelta: mutation.actualAward
         },
-        ...(jackpotEvents.length > 0 ? { jackpotEvents } : {}),
+        ...(jackpotEvents.length > 0 ? { jackpotEvents } : {})
       });
 
       syncSessionBonusState(app, result.session, "CLAIM");
@@ -324,33 +291,22 @@ const bonusRoutes: FastifyPluginAsync = async (app) => {
           sessionId: result.session.sessionId,
           bonusSessionId: result.session.id,
           tier: award.tier,
-          amount: award.amount,
+          amount: award.amount
         });
       }
-
-      app.eventBus.publish("bonus", {
-        profileId: result.session.profileId,
-        sessionId: result.session.sessionId,
-        bonusSessionId: result.session.id,
-        bonusType: result.session.type,
-        actionType: "CLAIM",
-        status: result.session.status,
-        rewardCoins: mutation.actualAward,
-      });
 
       return serializeBonusSessionSnapshot({
         session: result.session,
         actions: app.db.listBonusActions(result.session.id),
         action: result.action,
-        wallet: result.wallet,
+        wallet: result.wallet
       });
     } catch (error) {
       return reply.code(409).send({
-        message: error instanceof Error ? error.message : "Failed to claim bonus session",
+        message: error instanceof Error ? error.message : "Failed to claim bonus session"
       });
     }
   });
 };
 
 export default bonusRoutes;
-

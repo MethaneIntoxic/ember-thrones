@@ -4,7 +4,7 @@ export const EMBER_LOCK_MIN_ORBS = 6;
 export const EMBER_LOCK_RESPINS = 3;
 export const EMBER_LOCK_GRID_SIZE = 15;
 
-export const JACKPOT_TIERS = ["ember", "relic", "mythic", "throne"] as const;
+export const JACKPOT_TIERS = ["mini", "minor", "major", "grand"] as const;
 export type JackpotTier = (typeof JACKPOT_TIERS)[number];
 
 export interface OrbLanding {
@@ -29,19 +29,19 @@ export interface EmberLockResolution {
 }
 
 export const DEFAULT_JACKPOT_VALUES: Record<JackpotTier, number> = {
-  ember: 40,
-  relic: 200,
-  mythic: 1200,
-  throne: 6000
+  mini: 40,
+  minor: 200,
+  major: 1200,
+  grand: 6000
 };
 
 const ORB_VALUE_MULTIPLIERS = [0.05, 0.08, 0.1, 0.15, 0.22, 0.3, 0.45, 0.65] as const;
 
 const JACKPOT_ROLL_TABLE: Array<{ tier: JackpotTier; chance: number }> = [
-  { tier: "throne", chance: 0.00008 },
-  { tier: "mythic", chance: 0.00035 },
-  { tier: "relic", chance: 0.0012 },
-  { tier: "ember", chance: 0.0045 }
+  { tier: "grand", chance: 0.00008 },
+  { tier: "major", chance: 0.00035 },
+  { tier: "minor", chance: 0.0012 },
+  { tier: "mini", chance: 0.0045 }
 ];
 
 function roundCoins(value: number): number {
@@ -83,30 +83,20 @@ export function initializeEmberLock(initialOrbs: readonly OrbLanding[]): EmberLo
   };
 }
 
-export function stepEmberLock(
-  state: EmberLockState,
-  landedOrbs: readonly OrbLanding[]
-): EmberLockState {
+export function stepEmberLock(state: EmberLockState, landedOrbs: readonly OrbLanding[]): EmberLockState {
   if (!state.active) {
     return state;
   }
 
   const existingPositions = new Set(state.lockedOrbs.map((orb) => orb.position));
-  const filteredNewOrbs = normalizeOrbs(landedOrbs).filter(
-    (orb) => !existingPositions.has(orb.position)
-  );
-
-  const lockedOrbs = [...state.lockedOrbs, ...filteredNewOrbs].sort(
-    (left, right) => left.position - right.position
-  );
-
+  const filteredNewOrbs = normalizeOrbs(landedOrbs).filter((orb) => !existingPositions.has(orb.position));
+  const lockedOrbs = [...state.lockedOrbs, ...filteredNewOrbs].sort((left, right) => left.position - right.position);
   const gridFilled = lockedOrbs.length >= EMBER_LOCK_GRID_SIZE;
   const respinsRemaining = gridFilled
     ? state.respinsRemaining
     : filteredNewOrbs.length > 0
       ? EMBER_LOCK_RESPINS
       : Math.max(0, state.respinsRemaining - 1);
-
   const active = !gridFilled && respinsRemaining > 0;
 
   return {
@@ -118,11 +108,7 @@ export function stepEmberLock(
   };
 }
 
-export function rollOrbLanding(
-  rng: DeterministicRng,
-  position: number,
-  betPerSpin: number
-): OrbLanding {
+export function rollOrbLanding(rng: DeterministicRng, position: number, betPerSpin: number): OrbLanding {
   const jackpotRoll = rng.nextFloat();
   let cumulativeChance = 0;
 
@@ -138,11 +124,9 @@ export function rollOrbLanding(
   }
 
   const multiplier = ORB_VALUE_MULTIPLIERS[rng.nextInt(ORB_VALUE_MULTIPLIERS.length)] as number;
-  const coinValue = Math.max(1, roundCoins(betPerSpin * multiplier));
-
   return {
     position,
-    coinValue
+    coinValue: Math.max(1, roundCoins(betPerSpin * multiplier))
   };
 }
 
@@ -177,10 +161,10 @@ export function resolveEmberLockWin(
   jackpotValues: Record<JackpotTier, number> = DEFAULT_JACKPOT_VALUES
 ): EmberLockResolution {
   const jackpotHits: Record<JackpotTier, number> = {
-    ember: 0,
-    relic: 0,
-    mythic: 0,
-    throne: 0
+    mini: 0,
+    minor: 0,
+    major: 0,
+    grand: 0
   };
 
   let orbValueWin = 0;

@@ -4,12 +4,15 @@ export const REEL_COUNT = 5;
 export const ROW_COUNT = 3;
 
 export const SLOT_SYMBOLS = [
-  "ember",
-  "flame",
-  "scale",
-  "relic",
-  "mythic",
-  "throne",
+  "ten",
+  "jack",
+  "queen",
+  "king",
+  "ace",
+  "coin",
+  "lantern",
+  "ingot",
+  "dragon",
   "wild",
   "orb",
   "scatter"
@@ -31,58 +34,73 @@ const SYMBOL_BUILD_ORDER: readonly SlotSymbol[] = SLOT_SYMBOLS;
 
 export const MEDIUM_REEL_COMPOSITIONS: readonly ReelComposition[] = [
   {
-    ember: 10,
-    flame: 9,
-    scale: 8,
-    relic: 7,
-    mythic: 6,
-    throne: 4,
-    wild: 4,
-    orb: 10,
+    ten: 9,
+    jack: 8,
+    queen: 8,
+    king: 7,
+    ace: 6,
+    coin: 6,
+    lantern: 5,
+    ingot: 5,
+    dragon: 5,
+    wild: 5,
+    orb: 12,
     scatter: 2
   },
   {
-    ember: 9,
-    flame: 10,
-    scale: 8,
-    relic: 7,
-    mythic: 6,
-    throne: 4,
-    wild: 4,
-    orb: 10,
+    ten: 8,
+    jack: 9,
+    queen: 8,
+    king: 7,
+    ace: 6,
+    coin: 6,
+    lantern: 5,
+    ingot: 5,
+    dragon: 5,
+    wild: 5,
+    orb: 12,
     scatter: 2
   },
   {
-    ember: 9,
-    flame: 10,
-    scale: 9,
-    relic: 7,
-    mythic: 6,
-    throne: 4,
-    wild: 4,
-    orb: 9,
+    ten: 8,
+    jack: 8,
+    queen: 9,
+    king: 7,
+    ace: 6,
+    coin: 6,
+    lantern: 5,
+    ingot: 5,
+    dragon: 6,
+    wild: 5,
+    orb: 11,
     scatter: 2
   },
   {
-    ember: 9,
-    flame: 9,
-    scale: 9,
-    relic: 8,
-    mythic: 6,
-    throne: 4,
-    wild: 3,
-    orb: 10,
+    ten: 8,
+    jack: 8,
+    queen: 8,
+    king: 8,
+    ace: 6,
+    coin: 6,
+    lantern: 5,
+    ingot: 5,
+    dragon: 6,
+    wild: 5,
+    orb: 12,
     scatter: 2
   },
   {
-    ember: 9,
-    flame: 8,
-    scale: 9,
-    relic: 8,
-    mythic: 6,
-    throne: 4,
-    wild: 4,
-    orb: 10,
+    ten: 8,
+    jack: 8,
+    queen: 8,
+    king: 7,
+    ace: 7,
+    coin: 6,
+    lantern: 5,
+    ingot: 5,
+    dragon: 6,
+    wild: 5,
+    orb: 12,
     scatter: 2
   }
 ];
@@ -150,8 +168,7 @@ export function generateSpinFromSeed(
   seed: number | string,
   strips: ReadonlyArray<ReadonlyArray<SlotSymbol>> = MEDIUM_REEL_STRIPS
 ): SpinGrid {
-  const rng = createSeededRng(seed);
-  return generateSpin(rng, strips);
+  return generateSpin(createSeededRng(seed), strips);
 }
 
 export function countSymbol(grid: SpinGrid, symbol: SlotSymbol): number {

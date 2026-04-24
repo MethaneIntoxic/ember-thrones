@@ -25,14 +25,14 @@ export interface SpinSimulationConfig {
   spins: number;
   betPerSpin: number;
   seed: number | string;
-  freeQuestStance?: FreeQuestStance;
+  freeGamesModifierId?: FreeQuestStance;
   volatility?: "medium";
 }
 
 export const CADENCE_TARGETS = {
-  emberLockEverySpins: { min: 50, max: 60 },
-  freeQuestEverySpins: { min: 80, max: 140 },
-  retriggerChanceInFeature: { min: 0.15, max: 0.25 }
+  holdAndSpinEverySpins: { min: 40, max: 90 },
+  freeGamesEverySpins: { min: 70, max: 180 },
+  retriggerChanceInFeature: { min: 0.1, max: 0.3 }
 } as const;
 
 function roundValue(value: number): number {
@@ -40,35 +40,23 @@ function roundValue(value: number): number {
 }
 
 function safeFrequency(count: number, total: number): number {
-  if (total <= 0) {
-    return 0;
-  }
-
-  return roundValue(count / total);
+  return total <= 0 ? 0 : roundValue(count / total);
 }
 
 function observedEverySpins(totalSpins: number, triggerCount: number): number | null {
-  if (triggerCount <= 0) {
-    return null;
-  }
-
-  return roundValue(totalSpins / triggerCount);
+  return triggerCount <= 0 ? null : roundValue(totalSpins / triggerCount);
 }
 
-function runEmberLockFeature(
+function runHoldAndSpinFeature(
   initialOrbPositions: number[],
   betPerSpin: number,
   rngSeed: ReturnType<typeof createSeededRng>
-): {
-  totalWin: number;
-  jackpotHits: Record<JackpotTier, number>;
-} {
+): { totalWin: number; jackpotHits: Record<JackpotTier, number> } {
   const initialOrbs = initialOrbPositions.map((position) => rollOrbLanding(rngSeed, position, betPerSpin));
   let state = initializeEmberLock(initialOrbs);
 
   while (state.active) {
-    const newOrbs = generateRespinLandings(rngSeed, state, betPerSpin, 0.16);
-    state = stepEmberLock(state, newOrbs);
+    state = stepEmberLock(state, generateRespinLandings(rngSeed, state, betPerSpin, 0.16));
   }
 
   const resolution = resolveEmberLockWin(state);
@@ -78,9 +66,9 @@ function runEmberLockFeature(
   };
 }
 
-function runFreeQuestFeature(
+function runFreeGamesFeature(
   betPerSpin: number,
-  stance: FreeQuestStance,
+  modifierId: FreeQuestStance,
   rngSeed: ReturnType<typeof createSeededRng>
 ): {
   totalWin: number;
@@ -88,7 +76,7 @@ function runFreeQuestFeature(
   featureSpins: number;
   retriggerRolls: number;
 } {
-  let state = createFreeQuestState(stance);
+  let state = createFreeQuestState(modifierId);
   let totalWin = 0;
   let featureSpins = 0;
   let retriggerRolls = 0;
@@ -127,24 +115,23 @@ export function runSpinSimulation(config: SpinSimulationConfig): SimulationRepor
     throw new Error("betPerSpin must be positive");
   }
 
-  const freeQuestStance: FreeQuestStance = config.freeQuestStance ?? "relic";
+  const freeGamesModifierId: FreeQuestStance = config.freeGamesModifierId ?? "ROYALS_REMOVED";
   const rng = createSeededRng(config.seed);
 
   let totalBet = 0;
   let baseWin = 0;
   let featureWin = 0;
   let spinsWithWin = 0;
-  let emberLockTriggers = 0;
-  let freeQuestTriggers = 0;
-  let freeQuestRetriggers = 0;
-  let totalFreeQuestSpins = 0;
+  let holdAndSpinTriggers = 0;
+  let freeGamesTriggers = 0;
+  let freeGamesRetriggers = 0;
   let retriggerRolls = 0;
 
   const jackpots: Record<JackpotTier, number> = {
-    ember: 0,
-    relic: 0,
-    mythic: 0,
-    throne: 0
+    mini: 0,
+    minor: 0,
+    major: 0,
+    grand: 0
   };
 
   for (let spinIndex = 0; spinIndex < spins; spinIndex += 1) {
@@ -152,32 +139,26 @@ export function runSpinSimulation(config: SpinSimulationConfig): SimulationRepor
 
     const spin = generateSpin(rng);
     const basePayout = evaluatePaylines(spin, betPerSpin);
-
     let spinFeatureWin = 0;
 
-    const orbCount = countSymbol(spin, "orb");
-    if (isEmberLockTriggered(orbCount)) {
-      emberLockTriggers += 1;
+    if (isEmberLockTriggered(countSymbol(spin, "orb"))) {
+      holdAndSpinTriggers += 1;
 
-      const orbPositions = listSymbolPositions(spin, "orb");
-      const emberFeature = runEmberLockFeature(orbPositions, betPerSpin, rng);
-      spinFeatureWin += emberFeature.totalWin;
-
-      jackpots.ember += emberFeature.jackpotHits.ember;
-      jackpots.relic += emberFeature.jackpotHits.relic;
-      jackpots.mythic += emberFeature.jackpotHits.mythic;
-      jackpots.throne += emberFeature.jackpotHits.throne;
+      const holdAndSpinFeature = runHoldAndSpinFeature(listSymbolPositions(spin, "orb"), betPerSpin, rng);
+      spinFeatureWin += holdAndSpinFeature.totalWin;
+      jackpots.mini += holdAndSpinFeature.jackpotHits.mini;
+      jackpots.minor += holdAndSpinFeature.jackpotHits.minor;
+      jackpots.major += holdAndSpinFeature.jackpotHits.major;
+      jackpots.grand += holdAndSpinFeature.jackpotHits.grand;
     }
 
-    const scatterCount = basePayout.scatterCount;
-    if (isFreeQuestTriggered(scatterCount)) {
-      freeQuestTriggers += 1;
+    if (isFreeQuestTriggered(basePayout.scatterCount)) {
+      freeGamesTriggers += 1;
 
-      const freeQuestFeature = runFreeQuestFeature(betPerSpin, freeQuestStance, rng);
-      spinFeatureWin += freeQuestFeature.totalWin;
-      freeQuestRetriggers += freeQuestFeature.retriggerCount;
-      totalFreeQuestSpins += freeQuestFeature.featureSpins;
-      retriggerRolls += freeQuestFeature.retriggerRolls;
+      const freeGamesFeature = runFreeGamesFeature(betPerSpin, freeGamesModifierId, rng);
+      spinFeatureWin += freeGamesFeature.totalWin;
+      freeGamesRetriggers += freeGamesFeature.retriggerCount;
+      retriggerRolls += freeGamesFeature.retriggerRolls;
     }
 
     baseWin += basePayout.totalWin;
@@ -190,19 +171,18 @@ export function runSpinSimulation(config: SpinSimulationConfig): SimulationRepor
 
   const totalWin = roundValue(baseWin + featureWin);
   const rtp = roundValue(totalWin / totalBet);
-
-  const emberEverySpins = observedEverySpins(spins, emberLockTriggers);
-  const freeEverySpins = observedEverySpins(spins, freeQuestTriggers);
+  const holdAndSpinEverySpins = observedEverySpins(spins, holdAndSpinTriggers);
+  const freeGamesEverySpins = observedEverySpins(spins, freeGamesTriggers);
   const retriggerChanceInFeature =
-    retriggerRolls > 0 ? roundValue(freeQuestRetriggers / retriggerRolls) : null;
+    retriggerRolls > 0 ? roundValue(freeGamesRetriggers / retriggerRolls) : null;
 
-  const report: SimulationReport = {
+  return simulationReportSchema.parse({
     config: {
       spins,
       betPerSpin: roundValue(betPerSpin),
       seed: config.seed,
       volatility: "medium",
-      freeQuestStance
+      freeGamesModifierId
     },
     totals: {
       totalBet: roundValue(totalBet),
@@ -213,37 +193,36 @@ export function runSpinSimulation(config: SpinSimulationConfig): SimulationRepor
     },
     counters: {
       spinsWithWin,
-      emberLockTriggers,
-      freeQuestTriggers,
-      freeQuestRetriggers,
+      holdAndSpinTriggers,
+      freeGamesTriggers,
+      freeGamesRetriggers,
       jackpots
     },
     frequencies: {
       anyWin: safeFrequency(spinsWithWin, spins),
-      emberLockTrigger: safeFrequency(emberLockTriggers, spins),
-      freeQuestTrigger: safeFrequency(freeQuestTriggers, spins),
-      freeQuestRetrigger: safeFrequency(freeQuestRetriggers, spins),
-      freeQuestRetriggerInFeature:
-        retriggerChanceInFeature === null ? 0 : retriggerChanceInFeature
+      holdAndSpinTrigger: safeFrequency(holdAndSpinTriggers, spins),
+      freeGamesTrigger: safeFrequency(freeGamesTriggers, spins),
+      freeGamesRetrigger: safeFrequency(freeGamesRetriggers, spins),
+      freeGamesRetriggerInFeature: retriggerChanceInFeature === null ? 0 : retriggerChanceInFeature
     },
     cadence: {
-      emberLockEverySpins: {
-        observed: emberEverySpins,
-        targetMin: CADENCE_TARGETS.emberLockEverySpins.min,
-        targetMax: CADENCE_TARGETS.emberLockEverySpins.max,
+      holdAndSpinEverySpins: {
+        observed: holdAndSpinEverySpins,
+        targetMin: CADENCE_TARGETS.holdAndSpinEverySpins.min,
+        targetMax: CADENCE_TARGETS.holdAndSpinEverySpins.max,
         inRange:
-          emberEverySpins !== null &&
-          emberEverySpins >= CADENCE_TARGETS.emberLockEverySpins.min &&
-          emberEverySpins <= CADENCE_TARGETS.emberLockEverySpins.max
+          holdAndSpinEverySpins !== null &&
+          holdAndSpinEverySpins >= CADENCE_TARGETS.holdAndSpinEverySpins.min &&
+          holdAndSpinEverySpins <= CADENCE_TARGETS.holdAndSpinEverySpins.max
       },
-      freeQuestEverySpins: {
-        observed: freeEverySpins,
-        targetMin: CADENCE_TARGETS.freeQuestEverySpins.min,
-        targetMax: CADENCE_TARGETS.freeQuestEverySpins.max,
+      freeGamesEverySpins: {
+        observed: freeGamesEverySpins,
+        targetMin: CADENCE_TARGETS.freeGamesEverySpins.min,
+        targetMax: CADENCE_TARGETS.freeGamesEverySpins.max,
         inRange:
-          freeEverySpins !== null &&
-          freeEverySpins >= CADENCE_TARGETS.freeQuestEverySpins.min &&
-          freeEverySpins <= CADENCE_TARGETS.freeQuestEverySpins.max
+          freeGamesEverySpins !== null &&
+          freeGamesEverySpins >= CADENCE_TARGETS.freeGamesEverySpins.min &&
+          freeGamesEverySpins <= CADENCE_TARGETS.freeGamesEverySpins.max
       },
       retriggerChanceInFeature: {
         observed: retriggerChanceInFeature,
@@ -259,7 +238,5 @@ export function runSpinSimulation(config: SpinSimulationConfig): SimulationRepor
       winPerSpin: roundValue(totalWin / spins),
       winPerHit: spinsWithWin > 0 ? roundValue(totalWin / spinsWithWin) : 0
     }
-  };
-
-  return simulationReportSchema.parse(report);
+  });
 }

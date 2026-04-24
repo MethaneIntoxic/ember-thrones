@@ -23,12 +23,15 @@ export interface PayoutResult {
 }
 
 const PAYABLE_SYMBOLS: readonly PayableSymbol[] = [
-  "ember",
-  "flame",
-  "scale",
-  "relic",
-  "mythic",
-  "throne",
+  "ten",
+  "jack",
+  "queen",
+  "king",
+  "ace",
+  "coin",
+  "lantern",
+  "ingot",
+  "dragon",
   "wild"
 ];
 
@@ -52,23 +55,56 @@ export const DEFAULT_PAYLINES: readonly LinePattern[] = [
   [2, 0, 2, 0, 2],
   [1, 0, 2, 0, 1],
   [1, 2, 0, 2, 1],
-  [0, 2, 1, 2, 0]
+  [0, 2, 1, 2, 0],
+  [2, 0, 1, 0, 2],
+  [0, 1, 2, 2, 2],
+  [2, 1, 0, 0, 0],
+  [0, 0, 0, 1, 2],
+  [2, 2, 2, 1, 0],
+  [1, 1, 0, 1, 1],
+  [1, 1, 2, 1, 1],
+  [0, 1, 0, 0, 0],
+  [2, 1, 2, 2, 2],
+  [0, 0, 1, 2, 2],
+  [2, 2, 1, 0, 0],
+  [1, 0, 1, 0, 1],
+  [1, 2, 1, 2, 1],
+  [0, 2, 2, 2, 0],
+  [2, 0, 0, 0, 2],
+  [0, 2, 1, 0, 2],
+  [2, 0, 1, 2, 0],
+  [1, 0, 0, 1, 2],
+  [1, 2, 2, 1, 0],
+  [0, 1, 0, 2, 1],
+  [2, 1, 2, 0, 1],
+  [1, 0, 2, 2, 1],
+  [1, 2, 0, 0, 1],
+  [0, 1, 2, 0, 1],
+  [2, 1, 0, 2, 1],
+  [0, 0, 1, 1, 2],
+  [2, 2, 1, 1, 0],
+  [1, 0, 1, 1, 2],
+  [1, 2, 1, 1, 0],
+  [0, 1, 1, 2, 2]
 ];
 
 export const PAYOUT_TABLE: Record<PayableSymbol, Record<3 | 4 | 5, number>> = {
-  ember: { 3: 2.7, 4: 8.1, 5: 18.9 },
-  flame: { 3: 4.05, 4: 10.8, 5: 24.3 },
-  scale: { 3: 5.4, 4: 14.85, 5: 32.4 },
-  relic: { 3: 10.8, 4: 29.7, 5: 67.5 },
-  mythic: { 3: 17.55, 4: 47.25, 5: 108 },
-  throne: { 3: 33.75, 4: 94.5, 5: 202.5 },
-  wild: { 3: 54, 4: 135, 5: 297 }
+  ten: { 3: 3.6, 4: 7.2, 5: 14.4 },
+  jack: { 3: 4.5, 4: 9, 5: 18 },
+  queen: { 3: 5.4, 4: 10.8, 5: 21.6 },
+  king: { 3: 7.2, 4: 14.4, 5: 28.8 },
+  ace: { 3: 9, 4: 18, 5: 36 },
+  coin: { 3: 14.4, 4: 28.8, 5: 57.6 },
+  lantern: { 3: 18, 4: 36, 5: 72 },
+  ingot: { 3: 21.6, 4: 43.2, 5: 86.4 },
+  dragon: { 3: 36, 4: 108, 5: 270 },
+  wild: { 3: 54, 4: 180, 5: 540 }
 };
 
 export const SCATTER_PAYOUT_MULTIPLIERS: Record<3 | 4 | 5, number> = {
-  3: 18,
-  4: 60,
-  5: 180
+  3: 27,
+  4: 135,
+  5: 450
 };
 
 function isPayableSymbol(symbol: SlotSymbol): symbol is PayableSymbol {
@@ -86,14 +122,11 @@ function evaluateSingleLine(
   lineBet: number
 ): LineWin | null {
   const first = lineSymbols[0];
-
   if (!first || (first !== "wild" && !isPayableSymbol(first))) {
     return null;
   }
 
-  const candidates: readonly PayableSymbol[] =
-    first === "wild" ? PAYABLE_SYMBOLS : [first as PayableSymbol];
-
+  const candidates: readonly PayableSymbol[] = first === "wild" ? PAYABLE_SYMBOLS : [first as PayableSymbol];
   let bestWin: LineWin | null = null;
 
   for (const candidate of candidates) {
@@ -139,15 +172,12 @@ function scatterMultiplierForCount(scatterCount: number): number {
   if (scatterCount >= 5) {
     return SCATTER_PAYOUT_MULTIPLIERS[5];
   }
-
   if (scatterCount === 4) {
     return SCATTER_PAYOUT_MULTIPLIERS[4];
   }
-
   if (scatterCount === 3) {
     return SCATTER_PAYOUT_MULTIPLIERS[3];
   }
-
   return 0;
 }
 
@@ -172,8 +202,7 @@ export function evaluatePaylines(
     const symbols: SlotSymbol[] = [];
 
     for (let reel = 0; reel < grid.columns.length; reel += 1) {
-      const row = line[reel] as number;
-      symbols.push(grid.columns[reel][row] as SlotSymbol);
+      symbols.push(grid.columns[reel][line[reel] as number] as SlotSymbol);
     }
 
     const win = evaluateSingleLine(symbols, line, lineIndex, lineBet);

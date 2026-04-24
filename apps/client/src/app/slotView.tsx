@@ -17,15 +17,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 function formatBonusType(type: BonusType): string {
-  if (type === "EMBER_RESPIN") {
-    return "Ember Respin";
-  }
-
-  if (type === "WHEEL_ASCENSION") {
-    return "Wheel Ascension";
-  }
-
-  return "Relic Vault";
+  return type === "HOLD_AND_SPIN" ? "Hold & Spin" : "Free Games";
 }
 
 function runtimeEventLabel(eventStreamState: "idle" | "connected" | "disconnected" | "unavailable"): string {
@@ -87,8 +79,8 @@ export function SlotView(): JSX.Element {
   const queueSummary = useGameStore((state) => state.queueSummary);
   const eventStreamState = useGameStore((state) => state.eventStreamState);
   const jackpotLadder = useGameStore((state) => state.jackpotLadder);
-  const emberLock = useGameStore((state) => state.emberLock);
-  const freeQuest = useGameStore((state) => state.freeQuest);
+  const holdAndSpin = useGameStore((state) => state.holdAndSpin);
+  const freeGames = useGameStore((state) => state.freeGames);
   const activeBonus = useGameStore((state) => state.activeBonus);
   const bonusSessions = useGameStore((state) => state.bonusSessions);
 
@@ -274,14 +266,14 @@ export function SlotView(): JSX.Element {
     previousSpinsRef.current = wallet.lifetimeSpins;
     audioBus.playWin(lastWin);
 
-    if (emberLock.active) {
-      audioBus.playFeature("ember-lock");
+    if (holdAndSpin.active) {
+      audioBus.playFeature("hold-and-spin");
     }
 
-    if (freeQuest.active) {
-      audioBus.playFeature("free-quest");
+    if (freeGames.active) {
+      audioBus.playFeature("free-games");
     }
-  }, [wallet.lifetimeSpins, lastWin, emberLock.active, freeQuest.active]);
+  }, [wallet.lifetimeSpins, lastWin, holdAndSpin.active, freeGames.active]);
 
   useEffect(() => {
     if (activeBonus) {
@@ -406,11 +398,11 @@ export function SlotView(): JSX.Element {
     <article className="slot-view">
       <header className="top-banner">
         <div className="title-block">
-          <p className="panel-kicker">Vegas-Style 5x3 Cabinet Harness</p>
-          <h1>Dragon Link</h1>
+          <p className="panel-kicker">Dragon Link-Inspired 5x3 Cabinet</p>
+          <h1>Prosperity Link</h1>
           <p>
-            Fixed-geometry reels, denomination-led wagering, credits-per-spin ladders, and feature
-            sessions that distinguish authoritative streams from demo staging.
+            Fixed-geometry reels, denomination-led wagering, a visible four-tier jackpot ladder,
+            and deterministic feature sessions that distinguish authoritative streams from demo staging.
             {profile ? ` Welcome back, ${profile.nickname}.` : ""}
           </p>
         </div>
@@ -486,8 +478,8 @@ export function SlotView(): JSX.Element {
 
         <BonusPanels
           jackpotLadder={jackpotLadder}
-          emberLock={emberLock}
-          freeQuest={freeQuest}
+          holdAndSpin={holdAndSpin}
+          freeGames={freeGames}
           activeBonus={activeBonus}
           bonusSessionCount={bonusSessions.length}
           runtimeCapabilities={runtimeCapabilities}

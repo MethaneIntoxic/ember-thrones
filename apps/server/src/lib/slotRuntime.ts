@@ -6,19 +6,28 @@ import {
   consumeFreeQuestSpin,
   createFreeQuestState,
   rollFreeQuestRetrigger,
+  type BonusAdvanceActionType,
+  type BonusActionType,
   type BonusJackpotAward,
-  type BonusOutcome as SharedBonusOutcome,
-  type BonusProgress as SharedBonusProgress,
-  type BonusType as SharedBonusType,
-  type FreeQuestStance,
+  type BonusOutcome,
+  type BonusProgress,
+  type BonusType,
+  type FreeGameSpinReveal,
+  type FreeGamesModifierId,
+  type GameVariant,
+  type JackpotConfig,
   type JackpotTier,
+  type OrbTriggerConfig,
+  type ScatterTriggerConfig
 } from "@ember-thrones/shared";
 
 export type VolatilityPreset = "low" | "medium" | "high";
 export type SpeedMode = "normal" | "turbo" | "auto";
-export type ServerBonusType = SharedBonusType | "FREE_SPINS";
-export type ServerBonusAdvanceActionType = "RESPIN" | "WHEEL_STOP" | "PICK" | "FREE_SPIN";
-export type ServerBonusActionType = "START" | "RESUME" | ServerBonusAdvanceActionType | "CLAIM";
+export type ServerBonusType = BonusType;
+export type ServerBonusAdvanceActionType = BonusAdvanceActionType;
+export type ServerBonusActionType = BonusActionType;
+export type ServerBonusOutcome = BonusOutcome;
+export type ServerBonusProgress = BonusProgress;
 
 export interface MathProfileVersionRecord {
   id: string;
@@ -70,58 +79,10 @@ export interface BonusFeatureShell {
   entryState: Record<string, unknown>;
 }
 
-export interface FreeSpinsStickyWildState {
-  reelIndex: number;
-  rows: number[];
-}
-
-export interface FreeSpinReveal {
-  spinIndex: number;
-  lineWin: number;
-  awardedWin: number;
-  multiplier: number;
-  runningAward: number;
-  scatterCount: number;
-  retriggered: boolean;
-  awardedExtraSpins: number;
-  retriggerChance: number;
-  spinsRemainingAfter: number;
-  stickyWildState: FreeSpinsStickyWildState[];
-}
-
-export interface FreeSpinsOutcome {
-  type: "FREE_SPINS";
-  stance: FreeQuestStance;
-  initialSpins: number;
-  totalAwardedSpins: number;
-  retriggerCount: number;
-  multiplierLadder: number[];
-  stickyWildState: FreeSpinsStickyWildState[];
-  steps: FreeSpinReveal[];
-  finalAward: number;
-}
-
-export interface FreeSpinsProgress {
-  type: "FREE_SPINS";
-  spinCursor: number;
-  totalSpins: number;
-  revealedSpins: FreeSpinReveal[];
-  runningAward: number;
-  retriggerCount: number;
-  spinsRemaining: number;
-  multiplierLadder: number[];
-  completed: boolean;
-  claimed: boolean;
-  nextAction: "FREE_SPIN" | "CLAIM" | null;
-}
-
-export type ServerBonusOutcome = SharedBonusOutcome | FreeSpinsOutcome;
-export type ServerBonusProgress = SharedBonusProgress | FreeSpinsProgress;
-
 export const SLOT_GEOMETRY = {
   reels: 5,
   rows: 3,
-  paylines: 50,
+  paylines: 50
 } as const;
 
 export const DENOMINATION_LADDER = [1, 2, 5, 10, 20, 50, 100] as const;
@@ -132,12 +93,50 @@ export const DEFAULT_CREDITS_PER_SPIN = 50;
 export const DEFAULT_SPEED_MODE: SpeedMode = "normal";
 export const MAX_BET_CREDITS_PER_SPIN = CREDITS_PER_SPIN_OPTIONS[CREDITS_PER_SPIN_OPTIONS.length - 1]!;
 export const FEATURE_BOOST_CREDITS_PER_SPIN = 75;
+
 export const JACKPOT_RESET_AMOUNTS: Record<JackpotTier, number> = {
-  ember: 5_000,
-  relic: 25_000,
-  mythic: 100_000,
-  throne: 1_000_000,
+  mini: 5_000,
+  minor: 25_000,
+  major: 100_000,
+  grand: 1_000_000
 };
+
+export const DEFAULT_JACKPOT_CONFIG: JackpotConfig = {
+  resetAmounts: { ...JACKPOT_RESET_AMOUNTS },
+  contributionShares: {
+    mini: 0.4,
+    minor: 0.3,
+    major: 0.2,
+    grand: 0.1
+  },
+  maxBetRequiredForGrand: true
+};
+
+export const DEFAULT_ORB_TRIGGER_CONFIG: OrbTriggerConfig = {
+  minOrbs: 6,
+  resetSpins: 3,
+  boardCells: 15,
+  grandRequiresFullBoard: true
+};
+
+export const DEFAULT_SCATTER_TRIGGER_CONFIG: ScatterTriggerConfig = {
+  minScatters: 3,
+  baseAwardedGames: 10,
+  extraGamesPerExtraScatter: 2,
+  retriggerAward: 3
+};
+
+export const DEFAULT_GAME_VARIANT: GameVariant = {
+  id: "dragon-link-flagship",
+  label: "Dragon Link Flagship",
+  cabinetLabel: "Prosperity Cabinet",
+  theme: "Red lacquer link cabinet with a visible jackpot ladder and streamed bonus reveals.",
+  freeGamesModifierId: "ROYALS_REMOVED",
+  jackpotConfig: DEFAULT_JACKPOT_CONFIG,
+  orbTriggerConfig: DEFAULT_ORB_TRIGGER_CONFIG,
+  scatterTriggerConfig: DEFAULT_SCATTER_TRIGGER_CONFIG
+};
+
 export const DEFAULT_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   mode: "connected",
   supportsRealtimeEvents: true,
@@ -145,35 +144,33 @@ export const DEFAULT_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
   supportsResumableBonuses: true,
   label: "Connected authoritative runtime",
   disclosureCopy:
-    "This endpoint is connected to the authoritative server. Demo fallback and fake-live transport are disabled for this runtime.",
+    "This endpoint is connected to the authoritative server. Demo fallback and fake-live transport are disabled for this runtime."
 };
+
 export const MAX_BET_QUALIFICATION_RULES: MaxBetQualificationRule[] = [
   {
     id: "grand_jackpot",
     requiresCreditsPerSpin: MAX_BET_CREDITS_PER_SPIN,
-    appliesTo: ["progressive:throne"],
-    description: "The throne jackpot only participates when credits-per-spin is set to max bet.",
+    appliesTo: ["progressive:grand"],
+    description: "The grand jackpot only participates when credits-per-spin is set to max bet."
   },
   {
     id: "feature_boost",
     requiresCreditsPerSpin: FEATURE_BOOST_CREDITS_PER_SPIN,
-    appliesTo: ["feature:hold-and-spin", "feature:wheel"],
-    description: "Feature boost flags unlock once credits-per-spin reaches the high-tier wager band.",
-  },
+    appliesTo: ["feature:hold-and-spin", "feature:free-games"],
+    description: "Feature boost flags unlock once credits-per-spin reaches the high-tier wager band."
+  }
 ];
-export const DEFAULT_MATH_PROFILE_VERSION_ID = "dragon-link-vegas-v1";
+
+export const DEFAULT_MATH_PROFILE_VERSION_ID = "dragon-link-vegas-v2";
 export const DEFAULT_MATH_PROFILE_VERSION: Omit<MathProfileVersionRecord, "createdAt"> = {
   id: DEFAULT_MATH_PROFILE_VERSION_ID,
-  profileKey: "dragon_link_vegas",
-  versionTag: "2026.04.17",
-  reelSetId: "dragon_link_5x3_50l_v1",
-  checksum: createHash("sha256")
-    .update("dragon-link|vegas|5x3|50|server-streamed-features-v1")
-    .digest("hex"),
-  description: "Server-owned Vegas-style launch harness with streamed hold-and-spin, free-spins, and wheel bonuses.",
+  profileKey: "dragon_link_social",
+  versionTag: "2026.04.24",
+  reelSetId: "dragon_link_5x3_50l_v2",
+  checksum: createHash("sha256").update("dragon-link|social|5x3|50|hold-and-spin|free-games|v2").digest("hex"),
+  description: "Dragon Link-inspired social casino runtime with streamed hold-and-spin and free-games bonuses."
 };
-
-const FREE_SPIN_STICKY_ROWS = SLOT_GEOMETRY.rows;
 
 export class SeededRng {
   private state: number;
@@ -189,10 +186,6 @@ export class SeededRng {
     if (this.state === 0) {
       this.state = 0x6d2b79f5;
     }
-  }
-
-  public next(): number {
-    return this.nextFloat();
   }
 
   public nextFloat(): number {
@@ -219,7 +212,6 @@ export class SeededRng {
     if (probability >= 1) {
       return true;
     }
-
     return this.nextFloat() < probability;
   }
 
@@ -227,16 +219,7 @@ export class SeededRng {
     if (items.length === 0) {
       throw new Error("Cannot pick from an empty array");
     }
-
     return items[this.nextInt(items.length)] as T;
-  }
-
-  public fork(salt: number | string): SeededRng {
-    return new SeededRng(`${this.state}:${salt}`);
-  }
-
-  public getState(): number {
-    return this.state;
   }
 }
 
@@ -249,11 +232,11 @@ export const isSupportedCreditsPerSpin = (value: number): boolean => supportedCr
 export const isSupportedSpeedMode = (value: string): value is SpeedMode => supportedSpeedModes.has(value as SpeedMode);
 
 export const buildRuntimeCapabilities = (): RuntimeCapabilities => ({
-  ...DEFAULT_RUNTIME_CAPABILITIES,
+  ...DEFAULT_RUNTIME_CAPABILITIES
 });
 
 export const findWagerSelectionByTotalBet = (
-  totalBet: number,
+  totalBet: number
 ): Pick<WagerProfile, "denomination" | "creditsPerSpin"> | null => {
   if (!Number.isInteger(totalBet) || totalBet <= 0) {
     return null;
@@ -262,10 +245,7 @@ export const findWagerSelectionByTotalBet = (
   for (const denomination of DENOMINATION_LADDER) {
     for (const creditsPerSpin of CREDITS_PER_SPIN_OPTIONS) {
       if (denomination * creditsPerSpin === totalBet) {
-        return {
-          denomination,
-          creditsPerSpin,
-        };
+        return { denomination, creditsPerSpin };
       }
     }
   }
@@ -294,7 +274,7 @@ export const resolveWagerSelection = (input: {
   const totalBet = denomination * creditsPerSpin;
   if (input.bet !== undefined && input.bet !== totalBet) {
     throw new Error(
-      `Wager mismatch: legacy total bet ${input.bet} does not match denomination ${denomination} x credits ${creditsPerSpin}`,
+      `Wager mismatch: legacy total bet ${input.bet} does not match denomination ${denomination} x credits ${creditsPerSpin}`
     );
   }
 
@@ -310,145 +290,61 @@ export const resolveWagerSelection = (input: {
     isMaxBet: creditsPerSpin === MAX_BET_CREDITS_PER_SPIN,
     qualifiesForGrandJackpot: creditsPerSpin === MAX_BET_CREDITS_PER_SPIN,
     qualifiesForFeatureBoost: creditsPerSpin >= FEATURE_BOOST_CREDITS_PER_SPIN,
-    speedMode,
+    speedMode
   };
 };
 
-const normalizeJackpotTierForWager = (tier: JackpotTier, wager: WagerProfile): JackpotTier => {
-  if (tier === "throne" && !wager.qualifiesForGrandJackpot) {
-    return "mythic";
-  }
-
-  return tier;
-};
+const normalizeJackpotTierForWager = (tier: JackpotTier, wager: WagerProfile): JackpotTier =>
+  tier === "grand" && !wager.qualifiesForGrandJackpot ? "major" : tier;
 
 export const sanitizeBonusOutcomeForWager = (
   outcome: ServerBonusOutcome,
-  wager: WagerProfile,
+  wager: WagerProfile
 ): ServerBonusOutcome => {
-  if (wager.qualifiesForGrandJackpot || outcome.type === "FREE_SPINS") {
+  if (wager.qualifiesForGrandJackpot) {
     return outcome;
   }
 
-  if (outcome.type === "EMBER_RESPIN") {
+  if (outcome.type === "HOLD_AND_SPIN") {
     return {
       ...outcome,
       startingOrbs: outcome.startingOrbs.map((orb: (typeof outcome.startingOrbs)[number]) => ({
         ...orb,
-        ...(orb.jackpotTier
-          ? { jackpotTier: normalizeJackpotTierForWager(orb.jackpotTier, wager) }
-          : {}),
+        ...(orb.jackpotTier ? { jackpotTier: normalizeJackpotTierForWager(orb.jackpotTier, wager) } : {})
       })),
       steps: outcome.steps.map((step: (typeof outcome.steps)[number]) => ({
         ...step,
         landedOrbs: step.landedOrbs.map((orb: (typeof step.landedOrbs)[number]) => ({
           ...orb,
-          ...(orb.jackpotTier
-            ? { jackpotTier: normalizeJackpotTierForWager(orb.jackpotTier, wager) }
-            : {}),
-        })),
-      })),
-      jackpotOrbHits: outcome.jackpotOrbHits.map((hit: (typeof outcome.jackpotOrbHits)[number]) => ({
-        ...hit,
-        tier: normalizeJackpotTierForWager(hit.tier, wager),
-      })),
-    };
-  }
-
-  if (outcome.type === "WHEEL_ASCENSION") {
-    return {
-      ...outcome,
-      wedgeMap: outcome.wedgeMap.map((wedge: (typeof outcome.wedgeMap)[number]) => {
-        if (wedge.kind !== "jackpot" || typeof wedge.value !== "string") {
-          return wedge;
-        }
-
-        return {
-          ...wedge,
-          value: normalizeJackpotTierForWager(wedge.value, wager),
-        };
-      }),
-      outcomesBySpin: outcome.outcomesBySpin.map((wheelStop: (typeof outcome.outcomesBySpin)[number]) => ({
-        ...wheelStop,
-        ...(wheelStop.jackpotTier
-          ? { jackpotTier: normalizeJackpotTierForWager(wheelStop.jackpotTier, wager) }
-          : {}),
+          ...(orb.jackpotTier ? { jackpotTier: normalizeJackpotTierForWager(orb.jackpotTier, wager) } : {})
+        }))
       })),
       jackpotTierHits: outcome.jackpotTierHits.map((tier: (typeof outcome.jackpotTierHits)[number]) =>
-        normalizeJackpotTierForWager(tier, wager),
-      ),
+        normalizeJackpotTierForWager(tier, wager)
+      )
     };
   }
 
-  return {
-    ...outcome,
-    board: outcome.board.map((slot: (typeof outcome.board)[number]) => {
-      if (slot.hidden !== "jackpotTier" || typeof slot.value !== "string") {
-        return slot;
-      }
-
-      return {
-        ...slot,
-        value: normalizeJackpotTierForWager(slot.value, wager),
-      };
-    }),
-    pickResults: outcome.pickResults.map((pick: (typeof outcome.pickResults)[number]) => ({
-      ...pick,
-      ...(typeof pick.value === "string" ? { value: normalizeJackpotTierForWager(pick.value, wager) } : {}),
-      ...(pick.jackpotTierGranted
-        ? { jackpotTierGranted: normalizeJackpotTierForWager(pick.jackpotTierGranted, wager) }
-        : {}),
-    })),
-    jackpotTierHits: outcome.jackpotTierHits.map((tier: (typeof outcome.jackpotTierHits)[number]) =>
-      normalizeJackpotTierForWager(tier, wager),
-    ),
-  };
+  return outcome;
 };
 
 export const collectJackpotTiersForOutcome = (outcome: ServerBonusOutcome): JackpotTier[] => {
-  if (outcome.type === "FREE_SPINS") {
-    return [];
-  }
-
   return collectBonusSessionJackpotTiers(outcome) as JackpotTier[];
 };
 
-const pushStickyWild = (
-  state: FreeSpinsStickyWildState[],
-  reelIndex: number,
-  rowIndex: number,
-): FreeSpinsStickyWildState[] => {
-  const existing = state.find((entry) => entry.reelIndex === reelIndex);
-  if (!existing) {
-    return [...state, { reelIndex, rows: [rowIndex] }];
-  }
-
-  if (existing.rows.includes(rowIndex)) {
-    return state.map((entry) => ({ ...entry, rows: [...entry.rows] }));
-  }
-
-  return state.map((entry) =>
-    entry.reelIndex === reelIndex
-      ? {
-          ...entry,
-          rows: [...entry.rows, rowIndex].sort((left, right) => left - right),
-        }
-      : { ...entry, rows: [...entry.rows] },
-  );
-};
-
-export const buildFreeSpinsOutcome = (input: {
+export const buildFreeGamesOutcome = (input: {
   seed: string;
   wager: WagerProfile;
   triggerScatters: number;
-  stance?: FreeQuestStance;
-}): FreeSpinsOutcome => {
-  const rng = new SeededRng(`${input.seed}|free-spins|${input.wager.totalBet}`);
-  let state = createFreeQuestState(input.stance ?? "relic", Math.max(3, input.triggerScatters));
-  const initialSpins = state.spinsRemaining;
-  const steps: FreeSpinReveal[] = [];
-  const multiplierLadder: number[] = [];
-  let stickyWildState: FreeSpinsStickyWildState[] = [];
+  gameVariantId?: string;
+  modifierId?: FreeGamesModifierId;
+}): Extract<ServerBonusOutcome, { type: "FREE_GAMES" }> => {
+  const modifierId = input.modifierId ?? DEFAULT_GAME_VARIANT.freeGamesModifierId;
+  const gameVariantId = input.gameVariantId ?? DEFAULT_GAME_VARIANT.id;
+  const rng = new SeededRng(`${input.seed}|free-games|${input.wager.totalBet}|${modifierId}`);
+  let state = createFreeQuestState(modifierId, Math.max(3, input.triggerScatters));
+  const initialGames = state.spinsRemaining;
+  const steps: FreeGameSpinReveal[] = [];
   let runningAward = 0;
   let guard = 0;
 
@@ -456,132 +352,71 @@ export const buildFreeSpinsOutcome = (input: {
     guard += 1;
 
     const spinIndex = steps.length + 1;
-    const multiplier = 1 + Math.min(7, Math.floor((spinIndex - 1) / 2));
-    const scatterCount = rng.chance(0.18) ? 3 : rng.chance(0.22) ? 2 : rng.chance(0.2) ? 1 : 0;
-    const lineWin = Math.max(
-      1,
-      Math.floor(input.wager.totalBet * (0.35 + rng.nextFloat() * 1.65) * multiplier),
-    );
+    const scatterCount = rng.chance(0.16) ? 3 + rng.nextInt(2) : rng.chance(0.18) ? 2 : rng.chance(0.22) ? 1 : 0;
+    const lineWin = Math.max(1, Math.floor(input.wager.totalBet * (0.35 + rng.nextFloat() * 1.45)));
     const awardedWin = Math.max(1, applyStanceWinModifier(lineWin, state, rng));
     runningAward += awardedWin;
 
     let nextState = consumeFreeQuestSpin(state);
-    let retriggered = false;
-    let awardedExtraSpins = 0;
-    let retriggerChance = 0;
-    if (scatterCount >= 3) {
-      const retrigger = rollFreeQuestRetrigger(rng, nextState, scatterCount);
-      retriggered = retrigger.triggered;
-      awardedExtraSpins = retrigger.awardedSpins;
-      retriggerChance = retrigger.chance;
-
-      if (retriggered && awardedExtraSpins > 0) {
-        nextState = applyFreeQuestRetrigger(nextState, awardedExtraSpins);
-      }
+    const retrigger = rollFreeQuestRetrigger(rng, nextState, scatterCount);
+    if (retrigger.triggered && retrigger.awardedSpins > 0) {
+      nextState = applyFreeQuestRetrigger(nextState, retrigger.awardedSpins);
     }
 
-    if (rng.chance(0.38)) {
-      stickyWildState = pushStickyWild(
-        stickyWildState,
-        rng.nextInt(SLOT_GEOMETRY.reels),
-        rng.nextInt(FREE_SPIN_STICKY_ROWS),
-      );
-    }
-
-    multiplierLadder.push(multiplier);
-    steps.push({
+    const step: FreeGameSpinReveal = {
       spinIndex,
       lineWin,
       awardedWin,
-      multiplier,
       runningAward,
       scatterCount,
-      retriggered,
-      awardedExtraSpins,
-      retriggerChance,
-      spinsRemainingAfter: nextState.spinsRemaining,
-      stickyWildState: stickyWildState.map((entry) => ({ ...entry, rows: [...entry.rows] })),
-    });
+      retriggered: retrigger.triggered,
+      awardedExtraGames: retrigger.awardedSpins,
+      gamesRemainingAfter: nextState.spinsRemaining,
+      ...(modifierId === "MYSTERY_SPECIAL_REVEAL"
+        ? { multiplier: 1 + Math.min(4, Math.floor(spinIndex / 2)), revealedSpecialSymbol: rng.pick(["coin", "lantern", "ingot", "dragon", "wild"] as const) }
+        : modifierId === "EXPANDING_WILD_REELS"
+          ? { expandedWildReels: [rng.nextInt(SLOT_GEOMETRY.reels)] }
+          : { multiplier: 1 + Math.min(3, Math.floor(spinIndex / 3)) })
+    };
 
+    steps.push(step);
     state = nextState;
   }
 
   return {
-    type: "FREE_SPINS",
-    stance: state.stance,
-    initialSpins,
-    totalAwardedSpins: state.totalAwardedSpins,
+    type: "FREE_GAMES",
+    gameVariantId,
+    modifierId,
+    initialGames,
+    totalAwardedGames: state.totalAwardedSpins,
     retriggerCount: state.retriggerCount,
-    multiplierLadder,
-    stickyWildState,
     steps,
-    finalAward: runningAward,
+    finalAward: runningAward
   };
 };
 
 export const createFeatureShell = (
   outcome: ServerBonusOutcome,
   progress: ServerBonusProgress,
-  wager: WagerProfile,
+  wager: WagerProfile
 ): BonusFeatureShell => {
-  if (outcome.type === "EMBER_RESPIN" && progress.type === "EMBER_RESPIN") {
+  if (outcome.type === "HOLD_AND_SPIN" && progress.type === "HOLD_AND_SPIN") {
     return {
       type: outcome.type,
       mode: "server-owned",
       nextAction: progress.nextAction ?? "CLAIM",
       totalRounds: progress.totalSteps,
       roundsRemaining: Math.max(0, progress.totalSteps - progress.stepCursor),
-      intro: "Server-owned hold-and-spin progression with locked orb positions and streamed respins.",
+      intro: "Server-owned hold-and-spin progression with locked orb positions and reset respins.",
       progressiveQualified: {
         grand: wager.qualifiesForGrandJackpot,
-        featureBoost: wager.qualifiesForFeatureBoost,
+        featureBoost: wager.qualifiesForFeatureBoost
       },
       entryState: {
-        lockedPositions: outcome.startingOrbs.map((orb: (typeof outcome.startingOrbs)[number]) => orb.position),
-        visibleOrbCount: outcome.startingOrbs.length,
-        respinsRemaining: progress.respinsRemaining,
-        collectorMultiplier: progress.currentCollectorMultiplier,
-      },
-    };
-  }
-
-  if (outcome.type === "WHEEL_ASCENSION" && progress.type === "WHEEL_ASCENSION") {
-    return {
-      type: outcome.type,
-      mode: "server-owned",
-      nextAction: progress.nextAction ?? "CLAIM",
-      totalRounds: progress.totalSpins,
-      roundsRemaining: Math.max(0, progress.totalSpins - progress.spinCursor),
-      intro: "Server-owned wheel progression with one resolved stop streamed at a time.",
-      progressiveQualified: {
-        grand: wager.qualifiesForGrandJackpot,
-        featureBoost: wager.qualifiesForFeatureBoost,
-      },
-      entryState: {
-        awardedSpins: outcome.awardedSpins,
-        maxSpins: outcome.maxSpins,
-        wedgeCount: outcome.wedgeMap.length,
-      },
-    };
-  }
-
-  if (outcome.type === "FREE_SPINS" && progress.type === "FREE_SPINS") {
-    return {
-      type: outcome.type,
-      mode: "server-owned",
-      nextAction: progress.nextAction ?? "CLAIM",
-      totalRounds: progress.totalSpins,
-      roundsRemaining: Math.max(0, progress.totalSpins - progress.spinCursor),
-      intro: "Server-owned free-spins progression with streamed individual bonus spins and retrigger state.",
-      progressiveQualified: {
-        grand: false,
-        featureBoost: wager.qualifiesForFeatureBoost,
-      },
-      entryState: {
-        stance: outcome.stance,
-        initialSpins: outcome.initialSpins,
-        multiplierStart: outcome.multiplierLadder[0] ?? 1,
-      },
+        variantId: outcome.gameVariantId,
+        startingOrbCount: outcome.startingOrbs.length,
+        respinsRemaining: progress.respinsRemaining
+      }
     };
   }
 
@@ -589,26 +424,26 @@ export const createFeatureShell = (
     type: outcome.type,
     mode: "server-owned",
     nextAction: progress.nextAction ?? "CLAIM",
-    totalRounds: progress.totalPicks,
-    roundsRemaining: Math.max(0, progress.totalPicks - progress.pickCursor),
-    intro: "Server-owned relic pick progression retained for backward compatibility.",
+    totalRounds: progress.totalSpins,
+    roundsRemaining: Math.max(0, progress.totalSpins - progress.spinCursor),
+    intro: "Server-owned free-games progression with streamed bonus spins and retrigger state.",
     progressiveQualified: {
-      grand: wager.qualifiesForGrandJackpot,
-      featureBoost: wager.qualifiesForFeatureBoost,
+      grand: false,
+      featureBoost: wager.qualifiesForFeatureBoost
     },
     entryState: {
-      picksAllowed: outcome.picksAllowed,
-      boardSize: outcome.board.length,
-    },
+      variantId: outcome.gameVariantId,
+      modifierId: outcome.modifierId,
+      initialGames: outcome.initialGames
+    }
   };
 };
 
 export const buildMaxBetQualificationSummary = () => ({
   requiresMaxBetForGrand: true,
   maxBetCreditsPerSpin: MAX_BET_CREDITS_PER_SPIN,
-  rules: MAX_BET_QUALIFICATION_RULES.map((rule) => ({ ...rule })),
+  rules: MAX_BET_QUALIFICATION_RULES.map((rule) => ({ ...rule }))
 });
 
-export const cloneJackpotAwards = (awards: readonly BonusJackpotAward[]): BonusJackpotAward[] => {
-  return awards.map((award) => ({ ...award }));
-};
+export const cloneJackpotAwards = (awards: readonly BonusJackpotAward[]): BonusJackpotAward[] =>
+  awards.map((award) => ({ ...award }));

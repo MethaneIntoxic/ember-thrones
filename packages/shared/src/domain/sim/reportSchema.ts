@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { freeQuestStanceSchema, volatilityProfileSchema } from "../../contracts/api";
+import { freeGamesModifierSchema, volatilityProfileSchema } from "../../contracts/api";
 
 const cadenceBandSchema = z.object({
   observed: z.number().positive().nullable(),
@@ -21,7 +21,7 @@ export const simulationReportSchema = z.object({
     betPerSpin: z.number().positive(),
     seed: z.union([z.number(), z.string()]),
     volatility: volatilityProfileSchema,
-    freeQuestStance: freeQuestStanceSchema
+    freeGamesModifierId: freeGamesModifierSchema
   }),
   totals: z.object({
     totalBet: z.number().nonnegative(),
@@ -32,26 +32,26 @@ export const simulationReportSchema = z.object({
   }),
   counters: z.object({
     spinsWithWin: z.number().int().min(0),
-    emberLockTriggers: z.number().int().min(0),
-    freeQuestTriggers: z.number().int().min(0),
-    freeQuestRetriggers: z.number().int().min(0),
+    holdAndSpinTriggers: z.number().int().min(0),
+    freeGamesTriggers: z.number().int().min(0),
+    freeGamesRetriggers: z.number().int().min(0),
     jackpots: z.object({
-      ember: z.number().int().min(0),
-      relic: z.number().int().min(0),
-      mythic: z.number().int().min(0),
-      throne: z.number().int().min(0)
+      mini: z.number().int().min(0),
+      minor: z.number().int().min(0),
+      major: z.number().int().min(0),
+      grand: z.number().int().min(0)
     })
   }),
   frequencies: z.object({
     anyWin: z.number().min(0).max(1),
-    emberLockTrigger: z.number().min(0).max(1),
-    freeQuestTrigger: z.number().min(0).max(1),
-    freeQuestRetrigger: z.number().min(0).max(1),
-    freeQuestRetriggerInFeature: z.number().min(0).max(1)
+    holdAndSpinTrigger: z.number().min(0).max(1),
+    freeGamesTrigger: z.number().min(0).max(1),
+    freeGamesRetrigger: z.number().min(0).max(1),
+    freeGamesRetriggerInFeature: z.number().min(0).max(1)
   }),
   cadence: z.object({
-    emberLockEverySpins: cadenceBandSchema,
-    freeQuestEverySpins: cadenceBandSchema,
+    holdAndSpinEverySpins: cadenceBandSchema,
+    freeGamesEverySpins: cadenceBandSchema,
     retriggerChanceInFeature: retriggerCadenceSchema
   }),
   averages: z.object({

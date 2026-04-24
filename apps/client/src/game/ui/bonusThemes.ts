@@ -1,6 +1,6 @@
 import type { BonusType } from "../net/apiClient";
 
-export type BonusToneClass = "is-ember" | "is-wheel" | "is-relic";
+export type BonusToneClass = "is-hold-and-spin" | "is-free-games";
 
 export interface BonusTheme {
   type: BonusType;
@@ -28,53 +28,44 @@ function toAssetPath(relativePath: string): string {
 }
 
 const THEMES: Record<BonusType, BonusTheme> = {
-  EMBER_RESPIN: {
-    type: "EMBER_RESPIN",
-    label: "Ember Respin",
-    kicker: "Collector Hold Feature",
-    tagline: "Locked embers pin the board while every fresh orb reignites the respin counter.",
-    panelCopy: "High-heat lock feature built around collector resets and sticky orb value pressure.",
-    liveLabel: "Board ignited",
-    idleLabel: "Waiting for ember lock",
-    accentLabel: "Collector heat",
-    accentValueLabel: "Locked cells",
-    detailLabel: "Respin loop",
-    storyLead: "The collector wakes once the reels trap glowing embers on the grid.",
-    storySupport: "Every new orb snaps the count back to three, so the reveal should feel like a heated chase instead of a static audit.",
-    toneClass: "is-ember",
-    crestAsset: toAssetPath("assets/sprites/bonus-ember-seal.svg")
+  HOLD_AND_SPIN: {
+    type: "HOLD_AND_SPIN",
+    label: "Hold & Spin",
+    kicker: "Linked Orb Feature",
+    tagline:
+      "Six or more orbs lock onto the 5x3 board, every new orb resets the counter, and a full board chases the Grand.",
+    panelCopy:
+      "High-volatility orb feature with sticky values, jackpot labels, and a true three-respin pressure loop.",
+    liveLabel: "Board locked",
+    idleLabel: "Waiting for 6+ orbs",
+    accentLabel: "Orb pressure",
+    accentValueLabel: "Locked spots",
+    detailLabel: "Respin ladder",
+    storyLead:
+      "Hold & Spin should feel like the reels snap into a linked bonus board the moment the trigger lands.",
+    storySupport:
+      "Fresh orbs reset the count, jackpot labels stay visible, and the room should feel tighter with every empty respin.",
+    toneClass: "is-hold-and-spin",
+    crestAsset: toAssetPath("assets/sprites/bonus-hold-and-spin-seal.svg")
   },
-  WHEEL_ASCENSION: {
-    type: "WHEEL_ASCENSION",
-    label: "Wheel Ascension",
-    kicker: "Orbit Ladder Feature",
-    tagline: "Scatter energy climbs into a celestial wheel that can extend its own flight path.",
-    panelCopy: "Blue-sky retrigger feature that should feel suspended, ascending, and slightly ceremonial.",
-    liveLabel: "Wheel charging",
-    idleLabel: "Awaiting ascent",
-    accentLabel: "Orbit charge",
-    accentValueLabel: "Awarded spins",
-    detailLabel: "Retrigger loop",
-    storyLead: "Once the wheel takes over, every wedge reveal should feel like altitude and momentum.",
-    storySupport: "The presentation needs to emphasize the build toward extra spins rather than dropping the player into a metrics table.",
-    toneClass: "is-wheel",
-    crestAsset: toAssetPath("assets/sprites/bonus-wheel-seal.svg")
-  },
-  RELIC_VAULT_PICK: {
-    type: "RELIC_VAULT_PICK",
-    label: "Relic Vault",
-    kicker: "Vault Pick Feature",
-    tagline: "Keys break open a relic chamber where each pick exposes the next layer of value.",
-    panelCopy: "Treasure-room bonus with deliberate unlock rhythm, key scarcity, and vault-door drama.",
-    liveLabel: "Vault open",
-    idleLabel: "Chamber sealed",
-    accentLabel: "Vault resonance",
-    accentValueLabel: "Keys primed",
-    detailLabel: "Pick cycle",
-    storyLead: "Relic Vault should land like entering a chamber, not just opening another spreadsheet panel.",
-    storySupport: "Keys, picks, and hidden symbols need clear staging so the player senses the room unlocking around them.",
-    toneClass: "is-relic",
-    crestAsset: toAssetPath("assets/sprites/bonus-relic-seal.svg")
+  FREE_GAMES: {
+    type: "FREE_GAMES",
+    label: "Free Games",
+    kicker: "Scatter Feature",
+    tagline:
+      "Scatter symbols award a modifier-driven free-game series with deterministic reveal beats and retrigger potential.",
+    panelCopy:
+      "Feature-spins package tuned around cabinet modifiers such as royals removed, mystery symbol reveals, and expanding wild reels.",
+    liveLabel: "Games awarded",
+    idleLabel: "Waiting for scatters",
+    accentLabel: "Modifier state",
+    accentValueLabel: "Games awarded",
+    detailLabel: "Reveal trail",
+    storyLead: "Free Games should read like a real feature package, not a detached mini game.",
+    storySupport:
+      "The modifier needs to lead the presentation so players instantly understand why this series feels different from the base game.",
+    toneClass: "is-free-games",
+    crestAsset: toAssetPath("assets/sprites/bonus-free-games-seal.svg")
   }
 };
 

@@ -18,12 +18,14 @@ export interface ResolveEmberRespinCollectorLockInput {
   seed: number | string;
   bet: number;
   initialLockedCells: number[];
+  gameVariantId?: string;
 }
 
 export type ResolveEmberRespinInput = ResolveEmberRespinCollectorLockInput;
 
 const GRID_SIZE = 15;
 const STARTING_RESPINS = 3;
+const DEFAULT_GAME_VARIANT_ID = "dragon-link-flagship";
 
 function roundCoins(value: number): number {
   return Math.round(value * 10000) / 10000;
@@ -44,21 +46,17 @@ function uniqueSortedCells(cells: number[]): number[] {
 
 function rollJackpotTier(roll: number): JackpotTier | null {
   if (roll < 0.0025) {
-    return "throne";
+    return "grand";
   }
-
   if (roll < 0.01) {
-    return "mythic";
+    return "major";
   }
-
   if (roll < 0.04) {
-    return "relic";
+    return "minor";
   }
-
   if (roll < 0.12) {
-    return "ember";
+    return "mini";
   }
-
   return null;
 }
 
@@ -69,28 +67,24 @@ export function resolveEmberRespinCollectorLock(
     throw new Error("bet must be positive");
   }
 
-  const rng = createSeededRng(`${input.seed}:ember-respin`);
+  const rng = createSeededRng(`${input.seed}:hold-and-spin`);
   const lockedCellSet = new Set(uniqueSortedCells(input.initialLockedCells));
   const jackpotTierByCell = new Map<number, JackpotTier>();
+  const orbValueByCell = new Map<number, number>();
+  const jackpotOrbHits: EmberRespinJackpotOrbHit[] = [];
 
   while (lockedCellSet.size < 6) {
     lockedCellSet.add(rng.nextInt(GRID_SIZE));
   }
-
-  const orbValueByCell = new Map<number, number>();
-  const jackpotOrbHits: EmberRespinJackpotOrbHit[] = [];
 
   const addOrbAtCell = (cell: number): OrbLanding | null => {
     if (orbValueByCell.has(cell)) {
       return null;
     }
 
-    const orbValue = roundCoins(Math.max(1, input.bet * (0.45 + rng.nextFloat() * 2.25)));
-    orbValueByCell.set(cell, orbValue);
-
-     const landing: OrbLanding = {
+    const landing: OrbLanding = {
       position: cell,
-      coinValue: orbValue
+      coinValue: roundCoins(Math.max(1, input.bet * (0.45 + rng.nextFloat() * 2.25)))
     };
 
     const jackpotTier = rollJackpotTier(rng.nextFloat());
@@ -100,6 +94,7 @@ export function resolveEmberRespinCollectorLock(
       landing.jackpotTier = jackpotTier;
     }
 
+    orbValueByCell.set(cell, landing.coinValue);
     return landing;
   };
 
@@ -107,22 +102,14 @@ export function resolveEmberRespinCollectorLock(
     addOrbAtCell(cell);
   }
 
-  const initialLockedCells = [...lockedCellSet].sort((left, right) => left - right);
-  const startingOrbs = initialLockedCells.map((cell) => {
-    const landing: OrbLanding = {
+  const startingOrbs = [...lockedCellSet]
+    .sort((left, right) => left - right)
+    .map((cell) => ({
       position: cell,
-      coinValue: orbValueByCell.get(cell) ?? 0
-    };
+      coinValue: orbValueByCell.get(cell) ?? 0,
+      ...(jackpotTierByCell.has(cell) ? { jackpotTier: jackpotTierByCell.get(cell) } : {})
+    }));
 
-    const jackpotTier = jackpotTierByCell.get(cell);
-    if (jackpotTier) {
-      landing.jackpotTier = jackpotTier;
-    }
-
-    return landing;
-  });
-
-  let collectorMultiplier = 1;
   let respinsRemaining = STARTING_RESPINS;
   let respinsPlayed = 0;
   const guaranteedMysteryOrbAt = 2 + rng.nextInt(2);
@@ -149,12 +136,9 @@ export function resolveEmberRespinCollectorLock(
     }
 
     if (!landedNewOrb && respinsPlayed === guaranteedMysteryOrbAt && lockedCellSet.size < GRID_SIZE) {
-      const openCells: number[] = [];
-      for (let cell = 0; cell < GRID_SIZE; cell += 1) {
-        if (!lockedCellSet.has(cell)) {
-          openCells.push(cell);
-        }
-      }
+      const openCells = [...Array.from({ length: GRID_SIZE }, (_, cell) => cell)].filter(
+        (cell) => !lockedCellSet.has(cell)
+      );
 
       if (openCells.length > 0) {
         const forcedCell = openCells[rng.nextInt(openCells.length)] as number;
@@ -167,36 +151,34 @@ export function resolveEmberRespinCollectorLock(
       }
     }
 
-    if (rng.chance(0.2)) {
-      collectorMultiplier += 1;
-    }
-
     respinsRemaining = landedNewOrb ? STARTING_RESPINS : Math.max(0, respinsRemaining - 1);
-
     steps.push({
       respinIndex: respinsPlayed,
       landedOrbs: landedOrbs.sort((left, right) => left.position - right.position),
-      collectorMultiplier,
       respinsRemainingAfter: respinsRemaining,
       boardCompleted: lockedCellSet.size === GRID_SIZE
     });
   }
 
-  const lockedCells = [...lockedCellSet].sort((left, right) => left - right);
-  const orbValues = lockedCells.map((cell) => orbValueByCell.get(cell) ?? 0);
-  const orbValueTotal = orbValues.reduce((sum, value) => sum + value, 0);
+  const filledPositions = [...lockedCellSet].sort((left, right) => left - right);
+  const jackpotTierHits = [...new Set(jackpotOrbHits.map((hit) => hit.tier))];
+  if (filledPositions.length === GRID_SIZE && !jackpotTierHits.includes("grand")) {
+    jackpotTierHits.push("grand");
+  }
+
+  const finalAward = roundCoins(
+    filledPositions.reduce((sum, cell) => sum + (orbValueByCell.get(cell) ?? 0), 0)
+  );
 
   return {
-    type: "EMBER_RESPIN",
+    type: "HOLD_AND_SPIN",
+    gameVariantId: input.gameVariantId ?? DEFAULT_GAME_VARIANT_ID,
     startingOrbs,
     steps,
-    lockedCells,
-    orbValues,
+    filledPositions,
     respinsRemaining,
-    collectorMultiplier,
-    guaranteedMysteryOrbAt,
-    jackpotOrbHits,
-    finalAward: roundCoins(orbValueTotal * Math.max(1, collectorMultiplier))
+    jackpotTierHits,
+    finalAward
   };
 }
 
@@ -206,10 +188,10 @@ export function summarizeEmberJackpotHits(
   jackpotOrbHits: readonly EmberRespinJackpotOrbHit[]
 ): Record<JackpotTier, number> {
   const summary: Record<JackpotTier, number> = {
-    ember: 0,
-    relic: 0,
-    mythic: 0,
-    throne: 0
+    mini: 0,
+    minor: 0,
+    major: 0,
+    grand: 0
   };
 
   for (const hit of jackpotOrbHits) {

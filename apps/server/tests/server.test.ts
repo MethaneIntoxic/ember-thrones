@@ -11,7 +11,7 @@ interface SpinApiResponse {
   spinId: string;
   sessionId: string;
   bet: number;
-  linesMode: number;
+  grid: string[][];
   reels: string[][];
   wager: {
     denomination: number;
@@ -24,44 +24,46 @@ interface SpinApiResponse {
   };
   triggers: {
     holdAndSpin: boolean;
-    freeSpins: boolean;
-    wheel: boolean;
-    progressiveEligible: boolean;
+    freeGames: boolean;
   };
-  triggerFlags: {
-    emberRespin: boolean;
-    wheelAscension: boolean;
-    relicVaultPick: boolean;
-    freeQuest: boolean;
+  gameVariantId: string;
+  freeGamesModifierId: string;
+  holdAndSpinState?: {
+    active: boolean;
+    lockedCount: number;
+    respinsRemaining: number;
+    filledPositions: number[];
   };
-  bonusState: Record<string, unknown>;
-  bonusSessionRef: null | {
+  freeGamesState?: {
+    active: boolean;
+    modifierId: string;
+    gamesRemaining: number;
+    retriggerCount: number;
+    totalAwardedGames: number;
+  };
+  bonusSessionRef?: null | {
     id: string;
     type: string;
     status: string;
   };
-  featureShell: null | {
+  bonusPayload?: null | {
     type: string;
-    mode: string;
-    nextAction: string;
-    totalRounds: number;
-    roundsRemaining: number;
-    entryState: Record<string, unknown>;
+    sessionId: string;
+    revealSeed: string;
+    expectedTotalAward: number;
   };
-  bonusPayload: null;
-  jackpotSnapshotBefore: Record<string, number>;
-  jackpotSnapshotAfter: Record<string, number>;
-  mathProfileVersion: {
-    id: string;
-    profileKey: string;
-    versionTag: string;
-    reelSetId: string;
-  };
+  jackpotLadder: Record<string, number>;
   runtimeCapabilities: {
     mode: string;
     supportsRealtimeEvents: boolean;
     supportsResumableBonuses: boolean;
     disclosureCopy: string;
+  };
+  mathProfileVersion: {
+    id: string;
+    profileKey: string;
+    versionTag: string;
+    reelSetId: string;
   };
   signature: string;
 }
@@ -89,6 +91,11 @@ interface BonusSessionSnapshotResponse {
       nextAction: string;
       totalRounds: number;
       roundsRemaining: number;
+      intro: string;
+      progressiveQualified: {
+        grand: boolean;
+        featureBoost: boolean;
+      };
       entryState: Record<string, unknown>;
     };
     revealedJackpotAwards: Array<{
@@ -117,10 +124,8 @@ interface BonusSessionSnapshotResponse {
 }
 
 const typedStepRouteByType: Record<string, string> = {
-  EMBER_RESPIN: "hold-and-spin/step",
-  FREE_SPINS: "free-spins/step",
-  WHEEL_ASCENSION: "wheel/step",
-  RELIC_VAULT_PICK: "actions",
+  HOLD_AND_SPIN: "hold-and-spin/step",
+  FREE_GAMES: "free-games/step"
 };
 
 const buildTestApp = async (options: { dbFilePath?: string } = {}) => {
@@ -128,7 +133,7 @@ const buildTestApp = async (options: { dbFilePath?: string } = {}) => {
     dbFilePath: options.dbFilePath ?? ":memory:",
     logger: false,
     signatureSecret: "test-signature-secret",
-    replayTtlMs: 60_000,
+    replayTtlMs: 60_000
   });
 
   await registerApp(app);
@@ -138,7 +143,7 @@ const buildTestApp = async (options: { dbFilePath?: string } = {}) => {
 const createTestProfile = async (
   app: Awaited<ReturnType<typeof buildTestApp>>,
   profileId: string,
-  coins = 5_000_000,
+  coins = 5_000_000
 ): Promise<void> => {
   const response = await app.inject({
     method: "POST",
@@ -146,8 +151,8 @@ const createTestProfile = async (
     payload: {
       profileId,
       nickname: `Profile ${profileId}`,
-      coins,
-    },
+      coins
+    }
   });
 
   assert.equal(response.statusCode, 200);
@@ -163,7 +168,7 @@ const spinWithWager = async (
     speedMode?: "normal" | "turbo" | "auto";
     clientNonce: string;
     volatility?: "low" | "medium" | "high";
-  },
+  }
 ): Promise<SpinApiResponse> => {
   const response = await app.inject({
     method: "POST",
@@ -175,8 +180,8 @@ const spinWithWager = async (
       creditsPerSpin: options.creditsPerSpin ?? 50,
       speedMode: options.speedMode ?? "normal",
       clientNonce: options.clientNonce,
-      volatility: options.volatility ?? "high",
-    },
+      volatility: options.volatility ?? "high"
+    }
   });
 
   assert.equal(response.statusCode, 200);
@@ -185,11 +190,11 @@ const spinWithWager = async (
 
 const getBonusSnapshot = async (
   app: Awaited<ReturnType<typeof buildTestApp>>,
-  bonusSessionId: string,
+  bonusSessionId: string
 ): Promise<BonusSessionSnapshotResponse> => {
   const response = await app.inject({
     method: "GET",
-    url: `/bonus/${bonusSessionId}`,
+    url: `/bonus/${bonusSessionId}`
   });
 
   assert.equal(response.statusCode, 200);
@@ -199,12 +204,12 @@ const getBonusSnapshot = async (
 const spinUntilFeature = async (
   app: Awaited<ReturnType<typeof buildTestApp>>,
   profileId: string,
-  desiredType: string,
+  desiredType: "HOLD_AND_SPIN" | "FREE_GAMES",
   options: {
     denomination?: number;
     creditsPerSpin?: number;
     maxAttempts?: number;
-  } = {},
+  } = {}
 ): Promise<{ spin: SpinApiResponse; snapshot: BonusSessionSnapshotResponse }> => {
   const maxAttempts = options.maxAttempts ?? 2500;
 
@@ -215,7 +220,7 @@ const spinUntilFeature = async (
       denomination: options.denomination ?? 1,
       creditsPerSpin: options.creditsPerSpin ?? 50,
       clientNonce: `nonce-${profileId}-${desiredType}-${attempt.toString().padStart(4, "0")}`,
-      volatility: "high",
+      volatility: "high"
     });
 
     if (!spin.bonusSessionRef || spin.bonusSessionRef.type !== desiredType) {
@@ -231,28 +236,23 @@ const spinUntilFeature = async (
 
 const resolveBonusToClaim = async (
   app: Awaited<ReturnType<typeof buildTestApp>>,
-  snapshot: BonusSessionSnapshotResponse,
+  snapshot: BonusSessionSnapshotResponse
 ): Promise<BonusSessionSnapshotResponse> => {
   const resumeResponse = await app.inject({
     method: "POST",
-    url: `/bonus/${snapshot.session.id}/resume`,
+    url: `/bonus/${snapshot.session.id}/resume`
   });
 
   assert.equal(resumeResponse.statusCode, 200);
   let current = resumeResponse.json() as BonusSessionSnapshotResponse;
 
   while (current.session.progress.nextAction && current.session.progress.nextAction !== "CLAIM") {
-    const route = typedStepRouteByType[current.session.type] ?? "actions";
+    const route = typedStepRouteByType[current.session.type];
+    assert.ok(route, `Unsupported route for bonus type ${current.session.type}`);
+
     const actionResponse = await app.inject({
       method: "POST",
-      url: `/bonus/${current.session.id}/${route}`,
-      ...(route === "actions"
-        ? {
-            payload: {
-              actionType: current.session.progress.nextAction,
-            },
-          }
-        : {}),
+      url: `/bonus/${current.session.id}/${route}`
     });
 
     assert.equal(actionResponse.statusCode, 200);
@@ -261,7 +261,7 @@ const resolveBonusToClaim = async (
 
   const claimResponse = await app.inject({
     method: "POST",
-    url: `/bonus/${current.session.id}/claim`,
+    url: `/bonus/${current.session.id}/claim`
   });
 
   assert.equal(claimResponse.statusCode, 200);
@@ -278,8 +278,8 @@ test("profile lifecycle endpoints create and fetch wallets", async () => {
       payload: {
         profileId: "p-test-1",
         nickname: "Test Rider",
-        coins: 2_500,
-      },
+        coins: 2_500
+      }
     });
 
     assert.equal(createResponse.statusCode, 200);
@@ -288,7 +288,7 @@ test("profile lifecycle endpoints create and fetch wallets", async () => {
 
     const walletResponse = await app.inject({
       method: "GET",
-      url: "/wallet/p-test-1",
+      url: "/wallet/p-test-1"
     });
 
     assert.equal(walletResponse.statusCode, 200);
@@ -310,13 +310,13 @@ test("event stream headers preserve origin for browser EventSource clients", () 
   assert.equal(defaultHeaders["Access-Control-Allow-Origin"], "*");
 });
 
-test("config publishes wager ladders, max-bet rules, speed modes, and connected runtime honesty", async () => {
+test("config publishes wager ladders, jackpot rules, and connected runtime honesty", async () => {
   const app = await buildTestApp();
 
   try {
     const response = await app.inject({
       method: "GET",
-      url: "/config",
+      url: "/config"
     });
 
     assert.equal(response.statusCode, 200);
@@ -326,7 +326,7 @@ test("config publishes wager ladders, max-bet rules, speed modes, and connected 
     assert.deepEqual(payload.denominationLadder, [1, 2, 5, 10, 20, 50, 100]);
     assert.deepEqual(payload.creditsPerSpinOptions, [25, 50, 75, 100]);
     assert.deepEqual(payload.supportedSpeedModes, ["normal", "turbo", "auto"]);
-    assert.deepEqual(payload.supportedBonusTypes, ["EMBER_RESPIN", "FREE_SPINS", "WHEEL_ASCENSION"]);
+    assert.deepEqual(payload.supportedBonusTypes, ["HOLD_AND_SPIN", "FREE_GAMES"]);
 
     const maxBetQualification = payload.maxBetQualification as {
       requiresMaxBetForGrand: boolean;
@@ -340,14 +340,20 @@ test("config publishes wager ladders, max-bet rules, speed modes, and connected 
     const runtimeCapabilities = payload.runtimeCapabilities as {
       mode: string;
       supportsRealtimeEvents: boolean;
+      supportsQueueDrain: boolean;
       supportsResumableBonuses: boolean;
       disclosureCopy: string;
     };
     assert.equal(runtimeCapabilities.mode, "connected");
     assert.equal(runtimeCapabilities.supportsRealtimeEvents, true);
+    assert.equal(runtimeCapabilities.supportsQueueDrain, false);
     assert.equal(runtimeCapabilities.supportsResumableBonuses, true);
     assert.match(runtimeCapabilities.disclosureCopy, /authoritative server/i);
     assert.match(runtimeCapabilities.disclosureCopy, /disabled/i);
+
+    const gameVariant = payload.gameVariant as { id: string; freeGamesModifierId: string };
+    assert.equal(gameVariant.id, "dragon-link-flagship");
+    assert.equal(gameVariant.freeGamesModifierId, "ROYALS_REMOVED");
     assert.equal(payload.localOnly, false);
   } finally {
     await app.close();
@@ -366,13 +372,13 @@ test("spin rejects replayed nonce", async () => {
       denomination: 1,
       creditsPerSpin: 50,
       clientNonce: "nonce-abc-12345",
-      volatility: "medium",
+      volatility: "medium"
     };
 
     const firstResponse = await app.inject({
       method: "POST",
       url: "/spin",
-      payload,
+      payload
     });
 
     assert.equal(firstResponse.statusCode, 200);
@@ -380,7 +386,7 @@ test("spin rejects replayed nonce", async () => {
     const replayResponse = await app.inject({
       method: "POST",
       url: "/spin",
-      payload,
+      payload
     });
 
     assert.equal(replayResponse.statusCode, 409);
@@ -389,7 +395,7 @@ test("spin rejects replayed nonce", async () => {
   }
 });
 
-test("spin returns wager semantics, fixed payline mode, and server-owned feature shells", async () => {
+test("spin returns wager semantics and keeps feature sessions server-owned", async () => {
   const app = await buildTestApp();
 
   try {
@@ -402,43 +408,51 @@ test("spin returns wager semantics, fixed payline mode, and server-owned feature
       creditsPerSpin: 50,
       speedMode: "turbo",
       clientNonce: "nonce-v3-spin-0001",
-      volatility: "high",
+      volatility: "high"
     });
 
     assert.equal(payload.bet, 50);
-    assert.equal(payload.linesMode, 50);
     assert.equal(payload.wager.denomination, 1);
     assert.equal(payload.wager.creditsPerSpin, 50);
     assert.equal(payload.wager.totalBet, 50);
     assert.equal(payload.wager.isMaxBet, false);
     assert.equal(payload.wager.qualifiesForGrandJackpot, false);
     assert.equal(payload.wager.speedMode, "turbo");
-    assert.equal(payload.triggers.progressiveEligible, false);
-    assert.equal(payload.bonusPayload, null);
+    assert.equal(payload.gameVariantId, "dragon-link-flagship");
+    assert.equal(payload.freeGamesModifierId, "ROYALS_REMOVED");
     assert.equal(payload.runtimeCapabilities.mode, "connected");
     assert.equal(payload.mathProfileVersion.id.length > 0, true);
     assert.equal(typeof payload.signature, "string");
     assert.equal(payload.signature.length > 10, true);
+    assert.equal(payload.grid.length, 5);
+    assert.equal(payload.reels.length, 5);
 
     const flat = payload.reels.flat();
-    const orbCount = flat.filter((symbol) => symbol === "ORB").length;
-    const scatterCount = flat.filter((symbol) => symbol === "SCATTER").length;
-    const dragonCount = flat.filter((symbol) => symbol === "DRAGON").length;
+    const orbCount = flat.filter((symbol) => symbol === "orb").length;
+    const scatterCount = flat.filter((symbol) => symbol === "scatter").length;
 
-    assert.equal(payload.triggerFlags.emberRespin, orbCount >= 6);
-    assert.equal(payload.triggerFlags.wheelAscension, scatterCount >= 4 && dragonCount >= 1);
-    assert.equal(payload.triggerFlags.freeQuest, scatterCount >= 3);
-    assert.equal(payload.triggerFlags.relicVaultPick, false);
+    assert.equal(payload.triggers.holdAndSpin, orbCount >= 6);
+    assert.equal(payload.triggers.freeGames, scatterCount >= 3);
 
     if (payload.bonusSessionRef) {
-      assert.equal(payload.featureShell?.type, payload.bonusSessionRef.type);
-      assert.equal(payload.featureShell?.mode, "server-owned");
+      assert.ok(payload.bonusPayload);
+      assert.equal(payload.bonusPayload?.type, payload.bonusSessionRef.type);
+
       const snapshot = await getBonusSnapshot(app, payload.bonusSessionRef.id);
       assert.equal(snapshot.session.id, payload.bonusSessionRef.id);
       assert.equal(snapshot.session.type, payload.bonusSessionRef.type);
-      assert.equal(Object.prototype.hasOwnProperty.call(snapshot.session as object, "outcome"), false);
       assert.equal(snapshot.session.entrySnapshot.mode, "server-owned");
       assert.equal(snapshot.actions[0]?.actionType, "START");
+
+      if (payload.bonusSessionRef.type === "HOLD_AND_SPIN") {
+        assert.equal(snapshot.session.entrySnapshot.type, "HOLD_AND_SPIN");
+        assert.equal(typeof snapshot.session.entrySnapshot.entryState.startingOrbCount, "number");
+      } else {
+        assert.equal(snapshot.session.entrySnapshot.type, "FREE_GAMES");
+        assert.equal(typeof snapshot.session.entrySnapshot.entryState.initialGames, "number");
+      }
+    } else {
+      assert.equal(payload.bonusPayload ?? null, null);
     }
   } finally {
     await app.close();
@@ -457,26 +471,26 @@ test("spin surfaces max-bet qualification and blocks same-session spins while a 
       sessionId: "s-max-bet-regular",
       denomination: 1,
       creditsPerSpin: 50,
-      clientNonce: "nonce-max-bet-regular",
+      clientNonce: "nonce-max-bet-regular"
     });
     assert.equal(regularSpin.wager.qualifiesForGrandJackpot, false);
-    assert.equal(regularSpin.triggers.progressiveEligible, false);
+    assert.equal(regularSpin.wager.qualifiesForFeatureBoost, false);
 
     const maxBetSpin = await spinWithWager(app, {
       profileId,
       sessionId: "s-max-bet-high",
       denomination: 1,
       creditsPerSpin: 100,
-      clientNonce: "nonce-max-bet-high",
+      clientNonce: "nonce-max-bet-high"
     });
     assert.equal(maxBetSpin.wager.isMaxBet, true);
     assert.equal(maxBetSpin.wager.qualifiesForGrandJackpot, true);
-    assert.equal(maxBetSpin.triggers.progressiveEligible, true);
+    assert.equal(maxBetSpin.wager.qualifiesForFeatureBoost, true);
 
-    const { spin } = await spinUntilFeature(app, profileId, "FREE_SPINS", {
+    const { spin } = await spinUntilFeature(app, profileId, "FREE_GAMES", {
       denomination: 1,
       creditsPerSpin: 50,
-      maxAttempts: 1500,
+      maxAttempts: 1500
     });
 
     const blockedSpin = await app.inject({
@@ -488,8 +502,8 @@ test("spin surfaces max-bet qualification and blocks same-session spins while a 
         denomination: 1,
         creditsPerSpin: 50,
         clientNonce: "nonce-blocked-while-bonus-active",
-        volatility: "high",
-      },
+        volatility: "high"
+      }
     });
 
     assert.equal(blockedSpin.statusCode, 409);
@@ -500,17 +514,17 @@ test("spin surfaces max-bet qualification and blocks same-session spins while a 
   }
 });
 
-test("streamed bonus routes resolve hold-and-spin, free-spins, and wheel sessions end-to-end", async () => {
+test("streamed bonus routes resolve hold-and-spin and free-games sessions end-to-end", async () => {
   const app = await buildTestApp();
 
   try {
     const profileId = "p-streamed-1";
     await createTestProfile(app, profileId);
 
-    for (const bonusType of ["EMBER_RESPIN", "FREE_SPINS", "WHEEL_ASCENSION"]) {
+    for (const bonusType of ["HOLD_AND_SPIN", "FREE_GAMES"] as const) {
       const { spin, snapshot } = await spinUntilFeature(app, profileId, bonusType, {
         denomination: 1,
-        creditsPerSpin: bonusType === "WHEEL_ASCENSION" ? 100 : 50,
+        creditsPerSpin: bonusType === "FREE_GAMES" ? 50 : 100
       });
 
       assert.ok(spin.bonusSessionRef);
@@ -530,7 +544,7 @@ test("streamed bonus routes resolve hold-and-spin, free-spins, and wheel session
 
       const activeAfterClaimResponse = await app.inject({
         method: "GET",
-        url: `/bonus/session/${spin.sessionId}/active`,
+        url: `/bonus/session/${spin.sessionId}/active`
       });
 
       assert.equal(activeAfterClaimResponse.statusCode, 404);
@@ -549,10 +563,10 @@ test("bonus sessions survive app restart and can resume from persisted storage",
     const profileId = "p-recovery-1";
     await createTestProfile(app, profileId, 1_000_000);
 
-    const { spin, snapshot } = await spinUntilFeature(app, profileId, "FREE_SPINS", {
+    const { spin, snapshot } = await spinUntilFeature(app, profileId, "FREE_GAMES", {
       denomination: 1,
       creditsPerSpin: 50,
-      maxAttempts: 1500,
+      maxAttempts: 1500
     });
 
     assert.equal(snapshot.session.status, "PENDING");
@@ -562,17 +576,17 @@ test("bonus sessions survive app restart and can resume from persisted storage",
 
     const activeResponse = await app.inject({
       method: "GET",
-      url: `/bonus/session/${spin.sessionId}/active`,
+      url: `/bonus/session/${spin.sessionId}/active`
     });
 
     assert.equal(activeResponse.statusCode, 200);
     const activeSnapshot = activeResponse.json() as BonusSessionSnapshotResponse;
     assert.equal(activeSnapshot.session.id, spin.bonusSessionRef?.id);
-    assert.equal(activeSnapshot.session.type, "FREE_SPINS");
+    assert.equal(activeSnapshot.session.type, "FREE_GAMES");
 
     const resumeResponse = await app.inject({
       method: "POST",
-      url: `/bonus/${activeSnapshot.session.id}/resume`,
+      url: `/bonus/${activeSnapshot.session.id}/resume`
     });
 
     assert.equal(resumeResponse.statusCode, 200);
@@ -675,17 +689,19 @@ test("server boot migrates legacy sqlite files before creating dependent indexes
   const app = await buildTestApp({ dbFilePath });
 
   try {
+    await createTestProfile(app, "p-legacy-1", 100_000);
+
     const payload = await spinWithWager(app, {
       profileId: "p-legacy-1",
       sessionId: "s-legacy-1",
       denomination: 1,
       creditsPerSpin: 50,
       clientNonce: "nonce-legacy-migration-1",
-      volatility: "medium",
+      volatility: "medium"
     });
 
     assert.ok(payload.spinId);
-    assert.equal(payload.linesMode, 50);
+    assert.equal(payload.bet, 50);
     assert.equal(payload.wager.totalBet, 50);
     assert.equal(payload.mathProfileVersion.id.length > 0, true);
   } finally {
@@ -704,8 +720,8 @@ test("integrity endpoint returns checksum for profile session state", async () =
       payload: {
         profileId: "p-integrity-1",
         nickname: "Integrity Tester",
-        coins: 10_000,
-      },
+        coins: 10_000
+      }
     });
 
     await spinWithWager(app, {
@@ -714,12 +730,12 @@ test("integrity endpoint returns checksum for profile session state", async () =
       denomination: 1,
       creditsPerSpin: 50,
       clientNonce: "nonce-integrity-100",
-      volatility: "medium",
+      volatility: "medium"
     });
 
     const response = await app.inject({
       method: "GET",
-      url: "/integrity/p-integrity-1/s-integrity-1",
+      url: "/integrity/p-integrity-1/s-integrity-1"
     });
 
     assert.equal(response.statusCode, 200);
@@ -731,4 +747,3 @@ test("integrity endpoint returns checksum for profile session state", async () =
     await app.close();
   }
 });
-

@@ -1,34 +1,96 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  advanceBonusSession,
   bonusPayloadSchema,
   bonusSessionActionRequestSchema,
   bonusSessionRecordSchema,
-  normalizeTriggerFlags,
-  spinResultSchema,
-  type BonusSessionRecord
-} from "../src";
-import {
-  advanceBonusSession,
   buildBonusSessionSeed,
   claimBonusSession,
+  normalizeTriggerFlags,
   resumeBonusSession,
+  spinResultSchema,
+  type BonusSessionRecord,
   type BonusSessionSeed,
   type BonusSessionStateMutation
 } from "../src";
-import { resolveCelestialWheelAscension } from "../src/domain/features/celestialWheelAscension";
 import { resolveEmberRespinCollectorLock } from "../src/domain/features/emberRespinCollectorLock";
-import { resolveRelicVaultPick } from "../src/domain/features/relicVaultPick";
 
 const BASE_TIMESTAMP = "2026-04-17T00:00:00.000Z";
 
 const SPIN_GRID = [
-  ["ember", "flame", "scale"],
-  ["relic", "mythic", "throne"],
-  ["wild", "orb", "scatter"],
-  ["ember", "flame", "scale"],
-  ["relic", "mythic", "throne"]
+  ["dragon", "coin", "orb"],
+  ["lantern", "ingot", "scatter"],
+  ["wild", "dragon", "orb"],
+  ["coin", "scatter", "lantern"],
+  ["dragon", "ingot", "orb"]
 ] as const;
+
+const JACKPOT_CONFIG = {
+  resetAmounts: {
+    mini: 5_000,
+    minor: 25_000,
+    major: 100_000,
+    grand: 1_000_000
+  },
+  contributionShares: {
+    mini: 0.4,
+    minor: 0.3,
+    major: 0.2,
+    grand: 0.1
+  },
+  maxBetRequiredForGrand: true
+} as const;
+
+const ORB_TRIGGER_CONFIG = {
+  minOrbs: 6,
+  resetSpins: 3,
+  boardCells: 15,
+  grandRequiresFullBoard: true
+} as const;
+
+const SCATTER_TRIGGER_CONFIG = {
+  minScatters: 3,
+  baseAwardedGames: 10,
+  extraGamesPerExtraScatter: 2,
+  retriggerAward: 3
+} as const;
+
+function createFreeGamesOutcome() {
+  return {
+    type: "FREE_GAMES" as const,
+    gameVariantId: "dragon-link-flagship",
+    modifierId: "ROYALS_REMOVED" as const,
+    initialGames: 10,
+    totalAwardedGames: 12,
+    retriggerCount: 1,
+    steps: [
+      {
+        spinIndex: 1,
+        lineWin: 40,
+        awardedWin: 55,
+        runningAward: 55,
+        scatterCount: 3,
+        retriggered: true,
+        awardedExtraGames: 2,
+        gamesRemainingAfter: 11,
+        multiplier: 1
+      },
+      {
+        spinIndex: 2,
+        lineWin: 35,
+        awardedWin: 45,
+        runningAward: 100,
+        scatterCount: 1,
+        retriggered: false,
+        awardedExtraGames: 0,
+        gamesRemainingAfter: 10,
+        multiplier: 1
+      }
+    ],
+    finalAward: 100
+  };
+}
 
 function createRecord(seed: BonusSessionSeed): BonusSessionRecord {
   return {
@@ -91,23 +153,20 @@ describe("bonus session contracts", () => {
       normalizeTriggerFlags({
         emberLock: true,
         freeQuest: false,
-        emberRespinCollectorLock: true,
-        celestialWheelAscension: true,
-        relicVaultPick: false
+        emberRespinCollectorLock: true
       })
     ).toEqual({
-      emberLock: true,
-      freeQuest: false,
-      emberRespin: true,
-      wheelAscension: true,
-      relicVaultPick: false
+      holdAndSpin: true,
+      freeGames: false
     });
   });
 
   it("parses legacy trigger and bonus payload inputs into canonical spin results", () => {
-    const wheel = resolveCelestialWheelAscension({
-      seed: "wheel-spin-result",
-      bet: 30
+    const holdAndSpin = resolveEmberRespinCollectorLock({
+      seed: "hold-spin-result",
+      bet: 30,
+      initialLockedCells: [0, 1, 2, 3, 4, 5],
+      gameVariantId: "dragon-link-flagship"
     });
 
     const parsed = spinResultSchema.parse({
@@ -116,155 +175,151 @@ describe("bonus session contracts", () => {
       bet: 30,
       grid: SPIN_GRID,
       lineWins: [],
-      scatterCount: 3,
-      orbCount: 0,
+      scatterCount: 1,
+      orbCount: 6,
       baseWin: 0,
-      featureWin: wheel.finalAward,
-      totalWin: wheel.finalAward,
+      featureWin: holdAndSpin.finalAward,
+      totalWin: holdAndSpin.finalAward,
       triggers: {
-        emberLock: false,
-        freeQuest: false,
-        celestialWheelAscension: true
+        emberLock: true,
+        freeQuest: false
+      },
+      gameVariantId: "dragon-link-flagship",
+      freeGamesModifierId: "ROYALS_REMOVED",
+      jackpotConfig: JACKPOT_CONFIG,
+      orbTriggerConfig: ORB_TRIGGER_CONFIG,
+      scatterTriggerConfig: SCATTER_TRIGGER_CONFIG,
+      holdAndSpinState: {
+        active: true,
+        lockedCount: 6,
+        respinsRemaining: 3,
+        filledPositions: [0, 1, 2, 3, 4, 5]
       },
       bonusSessionRef: {
         id: "bonus-1",
-        type: "WHEEL_ASCENSION",
+        type: "HOLD_AND_SPIN",
         status: "PENDING"
       },
       bonusPayload: {
-        type: "CELESTIAL_WHEEL_ASCENSION",
+        type: "EMBER_RESPIN",
         sessionId: "session-1",
         revealSeed: "reveal-1",
-        expectedTotalAward: wheel.finalAward,
-        jackpotTiersHit: wheel.jackpotTierHits,
+        gameVariantId: "dragon-link-flagship",
+        freeGamesModifierId: "ROYALS_REMOVED",
+        expectedTotalAward: holdAndSpin.finalAward,
+        jackpotTiersHit: holdAndSpin.jackpotTierHits,
         jackpotAwards: [],
-        precomputedOutcome: wheel
+        jackpotConfig: JACKPOT_CONFIG,
+        orbTriggerConfig: ORB_TRIGGER_CONFIG,
+        scatterTriggerConfig: SCATTER_TRIGGER_CONFIG,
+        precomputedOutcome: holdAndSpin
       }
     });
 
-    expect(parsed.triggers.wheelAscension).toBe(true);
-    expect(Object.hasOwn(parsed.triggers, "celestialWheelAscension")).toBe(false);
-    expect(parsed.bonusPayload?.type).toBe("WHEEL_ASCENSION");
+    expect(parsed.triggers.holdAndSpin).toBe(true);
+    expect(parsed.triggers.freeGames).toBe(false);
+    expect(parsed.bonusPayload?.type).toBe("HOLD_AND_SPIN");
   });
 
   it("rejects mismatched bonus payload types against deterministic outcomes", () => {
-    const wheel = resolveCelestialWheelAscension({
-      seed: "wheel-mismatch",
-      bet: 25
+    const holdAndSpin = resolveEmberRespinCollectorLock({
+      seed: "hold-mismatch",
+      bet: 25,
+      initialLockedCells: [0, 1, 2, 3, 4, 5],
+      gameVariantId: "dragon-link-flagship"
     });
 
     expect(() =>
       bonusPayloadSchema.parse({
-        type: "EMBER_RESPIN",
+        type: "FREE_GAMES",
         sessionId: "session-2",
         revealSeed: "reveal-2",
-        expectedTotalAward: wheel.finalAward,
-        jackpotTiersHit: wheel.jackpotTierHits,
+        gameVariantId: "dragon-link-flagship",
+        freeGamesModifierId: "ROYALS_REMOVED",
+        expectedTotalAward: holdAndSpin.finalAward,
+        jackpotTiersHit: holdAndSpin.jackpotTierHits,
         jackpotAwards: [],
-        precomputedOutcome: wheel
+        jackpotConfig: JACKPOT_CONFIG,
+        orbTriggerConfig: ORB_TRIGGER_CONFIG,
+        scatterTriggerConfig: SCATTER_TRIGGER_CONFIG,
+        precomputedOutcome: holdAndSpin
       })
-    ).toThrow(/does not match deterministic outcome/);
+    ).toThrow(/does not match deterministic outcome type/);
   });
 
   it("accepts bonus action requests for deterministic progress steps", () => {
     expect(
       bonusSessionActionRequestSchema.parse({
-        actionType: "PICK",
-        clientSelection: { slotId: "slot-3" }
+        actionType: "FREE_GAME_SPIN",
+        clientSelection: { reel: 3 }
       })
     ).toEqual({
-      actionType: "PICK",
-      clientSelection: { slotId: "slot-3" }
+      actionType: "FREE_GAME_SPIN",
+      clientSelection: { reel: 3 }
     });
   });
 });
 
 describe("bonus session progression helpers", () => {
-  it("builds, advances, and claims ember respin sessions", () => {
+  it("builds, advances, and claims hold-and-spin sessions", () => {
     const outcome = resolveEmberRespinCollectorLock({
-      seed: "ember-progress",
+      seed: "hold-progress",
       bet: 20,
-      initialLockedCells: [0, 1, 2, 3, 4, 5]
+      initialLockedCells: [0, 1, 2, 3, 4, 5],
+      gameVariantId: "dragon-link-flagship"
     });
     const record = createRecord(
       buildBonusSessionSeed({
-        id: "bonus-ember-1",
-        spinId: "spin-ember-1",
-        sessionId: "session-ember-1",
-        profileId: "profile-ember-1",
-        revealSeed: "reveal-ember-1",
+        id: "bonus-hold-1",
+        spinId: "spin-hold-1",
+        sessionId: "session-hold-1",
+        profileId: "profile-hold-1",
+        revealSeed: "reveal-hold-1",
         expectedTotalAward: outcome.finalAward,
         jackpotAwards: [],
         outcome
       })
     );
-
-    expect(record.status).toBe("PENDING");
 
     const finalRecord = completeAndClaim(record, "RESPIN");
-    expect(finalRecord.progress.type).toBe("EMBER_RESPIN");
+    expect(finalRecord.progress.type).toBe("HOLD_AND_SPIN");
     expect(finalRecord.progress.claimed).toBe(true);
   });
 
-  it("builds, advances, and claims wheel ascension sessions", () => {
-    const outcome = resolveCelestialWheelAscension({
-      seed: "wheel-progress",
-      bet: 35
-    });
+  it("builds, advances, and claims free-games sessions", () => {
+    const outcome = createFreeGamesOutcome();
     const record = createRecord(
       buildBonusSessionSeed({
-        id: "bonus-wheel-1",
-        spinId: "spin-wheel-1",
-        sessionId: "session-wheel-1",
-        profileId: "profile-wheel-1",
-        revealSeed: "reveal-wheel-1",
+        id: "bonus-free-1",
+        spinId: "spin-free-1",
+        sessionId: "session-free-1",
+        profileId: "profile-free-1",
+        revealSeed: "reveal-free-1",
         expectedTotalAward: outcome.finalAward,
         jackpotAwards: [],
         outcome
       })
     );
 
-    const finalRecord = completeAndClaim(record, "WHEEL_STOP");
-    expect(finalRecord.progress.type).toBe("WHEEL_ASCENSION");
-    expect(finalRecord.progress.claimed).toBe(true);
-  });
-
-  it("builds, advances, and claims relic vault sessions", () => {
-    const outcome = resolveRelicVaultPick({
-      seed: "vault-progress",
-      bet: 18,
-      keyCount: 4
-    });
-    const record = createRecord(
-      buildBonusSessionSeed({
-        id: "bonus-vault-1",
-        spinId: "spin-vault-1",
-        sessionId: "session-vault-1",
-        profileId: "profile-vault-1",
-        revealSeed: "reveal-vault-1",
-        expectedTotalAward: outcome.finalAward,
-        jackpotAwards: [],
-        outcome
-      })
-    );
-
-    const finalRecord = completeAndClaim(record, "PICK");
-    expect(finalRecord.progress.type).toBe("RELIC_VAULT_PICK");
+    const finalRecord = completeAndClaim(record, "FREE_GAME_SPIN");
+    expect(finalRecord.progress.type).toBe("FREE_GAMES");
     expect(finalRecord.progress.claimed).toBe(true);
   });
 
   it("rejects mismatched bonus session record types and progress schemas", () => {
-    const outcome = resolveCelestialWheelAscension({
-      seed: "wheel-record-mismatch",
-      bet: 22
+    const outcome = resolveEmberRespinCollectorLock({
+      seed: "hold-record-mismatch",
+      bet: 22,
+      initialLockedCells: [0, 1, 2, 3, 4, 5],
+      gameVariantId: "dragon-link-flagship"
     });
     const validRecord = createRecord(
       buildBonusSessionSeed({
-        id: "bonus-wheel-2",
-        spinId: "spin-wheel-2",
-        sessionId: "session-wheel-2",
-        profileId: "profile-wheel-2",
-        revealSeed: "reveal-wheel-2",
+        id: "bonus-hold-2",
+        spinId: "spin-hold-2",
+        sessionId: "session-hold-2",
+        profileId: "profile-hold-2",
+        revealSeed: "reveal-hold-2",
         expectedTotalAward: outcome.finalAward,
         jackpotAwards: [],
         outcome
@@ -274,7 +329,7 @@ describe("bonus session progression helpers", () => {
     expect(() =>
       bonusSessionRecordSchema.parse({
         ...validRecord,
-        type: "EMBER_RESPIN"
+        type: "FREE_GAMES"
       })
     ).toThrow(/does not match outcome type/);
   });

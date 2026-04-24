@@ -1,22 +1,29 @@
 import { z } from "zod";
 
-export const jackpotTierSchema = z.enum(["ember", "relic", "mythic", "throne"]);
+export const jackpotTierSchema = z.enum(["mini", "minor", "major", "grand"]);
 export type JackpotTier = z.infer<typeof jackpotTierSchema>;
 const JACKPOT_TIER_ORDER = jackpotTierSchema.options;
 
-export const freeQuestStanceSchema = z.enum(["ember", "relic", "mythic"]);
-export type FreeQuestStance = z.infer<typeof freeQuestStanceSchema>;
+export const freeGamesModifierSchema = z.enum([
+  "ROYALS_REMOVED",
+  "MYSTERY_SPECIAL_REVEAL",
+  "EXPANDING_WILD_REELS"
+]);
+export type FreeGamesModifierId = z.infer<typeof freeGamesModifierSchema>;
 
 export const volatilityProfileSchema = z.enum(["low", "medium", "high"]);
 export type VolatilityProfile = z.infer<typeof volatilityProfileSchema>;
 
 export const symbolSchema = z.enum([
-  "ember",
-  "flame",
-  "scale",
-  "relic",
-  "mythic",
-  "throne",
+  "ten",
+  "jack",
+  "queen",
+  "king",
+  "ace",
+  "coin",
+  "lantern",
+  "ingot",
+  "dragon",
   "wild",
   "orb",
   "scatter"
@@ -42,37 +49,68 @@ export const lineWinSchema = z.object({
 });
 export type LineWin = z.infer<typeof lineWinSchema>;
 
-export const triggerFlagsInputSchema = z.object({
-  emberLock: z.boolean(),
-  freeQuest: z.boolean(),
+export const orbTriggerConfigSchema = z.object({
+  minOrbs: z.number().int().min(1),
+  resetSpins: z.number().int().min(1),
+  boardCells: z.number().int().min(1),
+  grandRequiresFullBoard: z.boolean()
+});
+export type OrbTriggerConfig = z.infer<typeof orbTriggerConfigSchema>;
+
+export const scatterTriggerConfigSchema = z.object({
+  minScatters: z.number().int().min(1),
+  baseAwardedGames: z.number().int().min(1),
+  extraGamesPerExtraScatter: z.number().int().min(0),
+  retriggerAward: z.number().int().min(1)
+});
+export type ScatterTriggerConfig = z.infer<typeof scatterTriggerConfigSchema>;
+
+export const jackpotConfigSchema = z.object({
+  resetAmounts: z.record(jackpotTierSchema, z.number().nonnegative()),
+  contributionShares: z.record(jackpotTierSchema, z.number().nonnegative()),
+  maxBetRequiredForGrand: z.boolean()
+});
+export type JackpotConfig = z.infer<typeof jackpotConfigSchema>;
+
+export const gameVariantSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  cabinetLabel: z.string().min(1),
+  theme: z.string().min(1),
+  freeGamesModifierId: freeGamesModifierSchema,
+  jackpotConfig: jackpotConfigSchema,
+  orbTriggerConfig: orbTriggerConfigSchema,
+  scatterTriggerConfig: scatterTriggerConfigSchema
+});
+export type GameVariant = z.infer<typeof gameVariantSchema>;
+
+export const legacyTriggerFlagsInputSchema = z.object({
+  emberLock: z.boolean().optional(),
+  freeQuest: z.boolean().optional(),
   emberRespin: z.boolean().optional(),
   emberRespinCollectorLock: z.boolean().optional(),
-  wheelAscension: z.boolean().optional(),
-  celestialWheelAscension: z.boolean().optional(),
-  relicVaultPick: z.boolean().optional()
+  freeSpins: z.boolean().optional(),
+  freeGames: z.boolean().optional(),
+  holdAndSpin: z.boolean().optional()
 });
-export type TriggerFlagsInput = z.input<typeof triggerFlagsInputSchema>;
+export type TriggerFlagsInput = z.input<typeof legacyTriggerFlagsInputSchema>;
+export const triggerFlagsInputSchema = legacyTriggerFlagsInputSchema;
 
 export const triggerFlagsSchema = z.object({
-  emberLock: z.boolean(),
-  freeQuest: z.boolean(),
-  emberRespin: z.boolean().default(false),
-  wheelAscension: z.boolean().default(false),
-  relicVaultPick: z.boolean().default(false)
+  holdAndSpin: z.boolean().default(false),
+  freeGames: z.boolean().default(false)
 });
 export type TriggerFlags = z.infer<typeof triggerFlagsSchema>;
 
 export function normalizeTriggerFlags(flags: TriggerFlagsInput): TriggerFlags {
   return {
-    emberLock: flags.emberLock,
-    freeQuest: flags.freeQuest,
-    emberRespin: flags.emberRespin ?? flags.emberRespinCollectorLock ?? false,
-    wheelAscension: flags.wheelAscension ?? flags.celestialWheelAscension ?? false,
-    relicVaultPick: flags.relicVaultPick ?? false
+    holdAndSpin:
+      flags.holdAndSpin ?? flags.emberRespin ?? flags.emberRespinCollectorLock ?? flags.emberLock ?? false,
+    freeGames: flags.freeGames ?? flags.freeSpins ?? flags.freeQuest ?? false
   };
 }
 
-export const normalizedTriggerFlagsSchema = triggerFlagsInputSchema.transform((flags) =>
+export const normalizedTriggerFlagsSchema = legacyTriggerFlagsInputSchema.transform((flags) =>
   normalizeTriggerFlags(flags)
 );
 
@@ -83,56 +121,54 @@ export const orbLandingSchema = z.object({
 });
 export type OrbLanding = z.infer<typeof orbLandingSchema>;
 
-export const emberLockStateSchema = z.object({
+export const holdAndSpinStateSchema = z.object({
   active: z.boolean(),
+  lockedCount: z.number().int().min(0).max(15),
   respinsRemaining: z.number().int().min(0).max(3),
-  spinsPlayed: z.number().int().min(0),
-  lockedOrbs: z.array(orbLandingSchema),
-  completed: z.boolean()
+  filledPositions: z.array(z.number().int().min(0).max(14))
 });
-export type EmberLockStateContract = z.infer<typeof emberLockStateSchema>;
+export type HoldAndSpinStateContract = z.infer<typeof holdAndSpinStateSchema>;
 
-export const freeQuestStateSchema = z.object({
+export const freeGamesStateSchema = z.object({
   active: z.boolean(),
-  stance: freeQuestStanceSchema,
-  spinsRemaining: z.number().int().min(0),
+  modifierId: freeGamesModifierSchema,
+  gamesRemaining: z.number().int().min(0),
   retriggerCount: z.number().int().min(0),
-  totalAwardedSpins: z.number().int().min(0)
+  totalAwardedGames: z.number().int().min(0)
 });
-export type FreeQuestStateContract = z.infer<typeof freeQuestStateSchema>;
+export type FreeGamesStateContract = z.infer<typeof freeGamesStateSchema>;
+export const emberLockStateSchema = holdAndSpinStateSchema;
+export type EmberLockStateContract = HoldAndSpinStateContract;
+export const freeQuestStateSchema = freeGamesStateSchema;
+export type FreeQuestStateContract = FreeGamesStateContract;
+export const freeQuestStanceSchema = freeGamesModifierSchema;
+export type FreeQuestStance = FreeGamesModifierId;
 
-export const bonusTypeSchema = z.enum([
-  "EMBER_RESPIN",
-  "WHEEL_ASCENSION",
-  "RELIC_VAULT_PICK"
-]);
+export const bonusTypeSchema = z.enum(["HOLD_AND_SPIN", "FREE_GAMES"]);
 export type BonusType = z.infer<typeof bonusTypeSchema>;
 
 export const bonusTypeCanonicalSchema = bonusTypeSchema;
-
 export const bonusTypeShortSchema = bonusTypeSchema;
 export type BonusTypeShort = z.infer<typeof bonusTypeShortSchema>;
 
 export const legacyBonusTypeSchema = z.enum([
+  "EMBER_RESPIN",
   "EMBER_RESPIN_COLLECTOR_LOCK",
-  "CELESTIAL_WHEEL_ASCENSION",
-  "RELIC_VAULT"
+  "FREE_SPINS",
+  "FREE_QUEST"
 ]);
 export type LegacyBonusType = z.infer<typeof legacyBonusTypeSchema>;
 
-export const bonusTypeInputSchema = z.union([
-  bonusTypeSchema,
-  legacyBonusTypeSchema
-]);
+export const bonusTypeInputSchema = z.union([bonusTypeSchema, legacyBonusTypeSchema]);
 export type BonusTypeInput = z.input<typeof bonusTypeInputSchema>;
 
 const bonusTypeAliasToCanonical: Record<BonusTypeInput, BonusType> = {
-  EMBER_RESPIN: "EMBER_RESPIN",
-  EMBER_RESPIN_COLLECTOR_LOCK: "EMBER_RESPIN",
-  WHEEL_ASCENSION: "WHEEL_ASCENSION",
-  CELESTIAL_WHEEL_ASCENSION: "WHEEL_ASCENSION",
-  RELIC_VAULT: "RELIC_VAULT_PICK",
-  RELIC_VAULT_PICK: "RELIC_VAULT_PICK"
+  HOLD_AND_SPIN: "HOLD_AND_SPIN",
+  FREE_GAMES: "FREE_GAMES",
+  EMBER_RESPIN: "HOLD_AND_SPIN",
+  EMBER_RESPIN_COLLECTOR_LOCK: "HOLD_AND_SPIN",
+  FREE_SPINS: "FREE_GAMES",
+  FREE_QUEST: "FREE_GAMES"
 };
 
 export function normalizeBonusType(type: BonusTypeInput): BonusType {
@@ -154,113 +190,56 @@ export const bonusJackpotAwardSchema = z.object({
 });
 export type BonusJackpotAward = z.infer<typeof bonusJackpotAwardSchema>;
 
-const bonusValueSchema = z.union([z.number().nonnegative(), jackpotTierSchema]);
-
-export const emberRespinJackpotOrbHitSchema = z.object({
-  cell: z.number().int().min(0).max(14),
-  tier: jackpotTierSchema
-});
-export type EmberRespinJackpotOrbHit = z.infer<typeof emberRespinJackpotOrbHitSchema>;
-
-export const emberRespinRevealStepSchema = z.object({
+export const holdAndSpinRevealStepSchema = z.object({
   respinIndex: z.number().int().min(1),
   landedOrbs: z.array(orbLandingSchema),
-  collectorMultiplier: z.number().int().min(1),
   respinsRemainingAfter: z.number().int().min(0).max(3),
   boardCompleted: z.boolean()
 });
-export type EmberRespinRevealStep = z.infer<typeof emberRespinRevealStepSchema>;
+export type HoldAndSpinRevealStep = z.infer<typeof holdAndSpinRevealStepSchema>;
 
-export const emberRespinCollectorLockSessionSchema = z.object({
-  type: z.literal("EMBER_RESPIN"),
+export const holdAndSpinSessionSchema = z.object({
+  type: z.literal("HOLD_AND_SPIN"),
+  gameVariantId: z.string().min(1),
   startingOrbs: z.array(orbLandingSchema).min(6).max(15),
-  steps: z.array(emberRespinRevealStepSchema),
-  lockedCells: z.array(z.number().int().min(0).max(14)),
-  orbValues: z.array(z.number().nonnegative()),
+  steps: z.array(holdAndSpinRevealStepSchema),
+  filledPositions: z.array(z.number().int().min(0).max(14)),
   respinsRemaining: z.number().int().min(0).max(3),
-  collectorMultiplier: z.number().int().min(1),
-  guaranteedMysteryOrbAt: z.number().int().min(1).nullable(),
-  jackpotOrbHits: z.array(emberRespinJackpotOrbHitSchema),
-  finalAward: z.number().nonnegative()
-});
-export type EmberRespinCollectorLockSession = z.infer<
-  typeof emberRespinCollectorLockSessionSchema
->;
-
-export const wheelWedgeKindSchema = z.enum(["coin", "multiplier", "jackpot", "respin"]);
-export type WheelWedgeKind = z.infer<typeof wheelWedgeKindSchema>;
-
-export const wheelWedgeSchema = z.object({
-  wedgeId: z.string().min(1),
-  kind: wheelWedgeKindSchema,
-  value: z.union([z.number().nonnegative(), jackpotTierSchema])
-});
-export type WheelWedge = z.infer<typeof wheelWedgeSchema>;
-
-export const wheelOutcomeBySpinSchema = z.object({
-  wedgeId: z.string().min(1),
-  resolvedAward: z.number().nonnegative(),
-  jackpotTier: jackpotTierSchema.optional()
-});
-export type WheelOutcomeBySpin = z.infer<typeof wheelOutcomeBySpinSchema>;
-
-export const celestialWheelAscensionSessionSchema = z.object({
-  type: z.literal("WHEEL_ASCENSION"),
-  wedgeMap: z.array(wheelWedgeSchema),
-  awardedSpins: z.number().int().min(0),
-  maxSpins: z.number().int().min(1),
-  outcomesBySpin: z.array(wheelOutcomeBySpinSchema),
   jackpotTierHits: z.array(jackpotTierSchema),
   finalAward: z.number().nonnegative()
 });
-export type CelestialWheelAscensionSession = z.infer<
-  typeof celestialWheelAscensionSessionSchema
->;
+export type HoldAndSpinSession = z.infer<typeof holdAndSpinSessionSchema>;
 
-export const relicVaultHiddenSchema = z.enum([
-  "coin",
-  "multiplier",
-  "jackpotTier",
-  "bustShield"
-]);
-export type RelicVaultHidden = z.infer<typeof relicVaultHiddenSchema>;
-
-export const relicVaultBoardSlotSchema = z.object({
-  slotId: z.string().min(1),
-  hidden: relicVaultHiddenSchema,
-  value: bonusValueSchema.optional()
-});
-export type RelicVaultBoardSlot = z.infer<typeof relicVaultBoardSlotSchema>;
-
-export const relicVaultPickResultSchema = z.object({
-  pickIndex: z.number().int().min(1),
-  slotId: z.string().min(1),
-  hidden: relicVaultHiddenSchema,
-  value: bonusValueSchema.optional(),
-  awardDelta: z.number().nonnegative(),
+export const freeGameSpinRevealSchema = z.object({
+  spinIndex: z.number().int().min(1),
+  lineWin: z.number().nonnegative(),
+  awardedWin: z.number().nonnegative(),
   runningAward: z.number().nonnegative(),
-  jackpotTierGranted: jackpotTierSchema.optional()
+  scatterCount: z.number().int().min(0),
+  retriggered: z.boolean(),
+  awardedExtraGames: z.number().int().min(0),
+  gamesRemainingAfter: z.number().int().min(0),
+  multiplier: z.number().positive().optional(),
+  revealedSpecialSymbol: symbolSchema.optional(),
+  expandedWildReels: z.array(z.number().int().min(0).max(4)).optional()
 });
-export type RelicVaultPickResult = z.infer<typeof relicVaultPickResultSchema>;
+export type FreeGameSpinReveal = z.infer<typeof freeGameSpinRevealSchema>;
 
-export const relicVaultPickSessionSchema = z.object({
-  type: z.literal("RELIC_VAULT_PICK"),
-  keyCount: z.number().int().min(1),
-  board: z.array(relicVaultBoardSlotSchema),
-  picksAllowed: z.number().int().min(1),
-  picksMade: z.number().int().min(0),
-  revealed: z.array(z.string().min(1)),
-  guaranteedNonBustFirstPick: z.boolean(),
-  pickResults: z.array(relicVaultPickResultSchema),
-  jackpotTierHits: z.array(jackpotTierSchema),
+export const freeGamesSessionSchema = z.object({
+  type: z.literal("FREE_GAMES"),
+  gameVariantId: z.string().min(1),
+  modifierId: freeGamesModifierSchema,
+  initialGames: z.number().int().min(1),
+  totalAwardedGames: z.number().int().min(1),
+  retriggerCount: z.number().int().min(0),
+  steps: z.array(freeGameSpinRevealSchema),
   finalAward: z.number().nonnegative()
 });
-export type RelicVaultPickSession = z.infer<typeof relicVaultPickSessionSchema>;
+export type FreeGamesSession = z.infer<typeof freeGamesSessionSchema>;
 
 export const bonusOutcomeSchema = z.discriminatedUnion("type", [
-  emberRespinCollectorLockSessionSchema,
-  celestialWheelAscensionSessionSchema,
-  relicVaultPickSessionSchema
+  holdAndSpinSessionSchema,
+  freeGamesSessionSchema
 ]);
 export type BonusOutcome = z.infer<typeof bonusOutcomeSchema>;
 
@@ -272,10 +251,7 @@ function normalizeJackpotTierList(tiers: readonly JackpotTier[]): JackpotTier[] 
   return JACKPOT_TIER_ORDER.filter((tier) => unique.has(tier));
 }
 
-function jackpotTierListsMatch(
-  left: readonly JackpotTier[],
-  right: readonly JackpotTier[]
-): boolean {
+function jackpotTierListsMatch(left: readonly JackpotTier[], right: readonly JackpotTier[]): boolean {
   const normalizedLeft = normalizeJackpotTierList(left);
   const normalizedRight = normalizeJackpotTierList(right);
 
@@ -294,20 +270,11 @@ function jackpotAwardsAlignWithTierList(
 }
 
 export function collectBonusSessionJackpotTiers(session: BonusSession): JackpotTier[] {
-  if (session.type === "EMBER_RESPIN") {
-    const tiers = new Set<JackpotTier>();
-    for (const hit of session.jackpotOrbHits) {
-      tiers.add(hit.tier);
-    }
-
-    return [...tiers];
-  }
-
-  if (session.type === "WHEEL_ASCENSION") {
+  if (session.type === "HOLD_AND_SPIN") {
     return [...new Set(session.jackpotTierHits)];
   }
 
-  return [...new Set(session.jackpotTierHits)];
+  return [];
 }
 
 export const bonusPayloadSchema = z
@@ -315,9 +282,14 @@ export const bonusPayloadSchema = z
     type: normalizedBonusTypeSchema,
     sessionId: z.string().min(1),
     revealSeed: z.string().min(1),
+    gameVariantId: z.string().min(1),
+    freeGamesModifierId: freeGamesModifierSchema,
     expectedTotalAward: z.number().nonnegative(),
     jackpotTiersHit: z.array(jackpotTierSchema),
     jackpotAwards: z.array(bonusJackpotAwardSchema),
+    jackpotConfig: jackpotConfigSchema,
+    orbTriggerConfig: orbTriggerConfigSchema,
+    scatterTriggerConfig: scatterTriggerConfigSchema,
     precomputedOutcome: bonusOutcomeSchema
   })
   .superRefine((payload, ctx) => {
@@ -326,6 +298,25 @@ export const bonusPayloadSchema = z
         code: z.ZodIssueCode.custom,
         message: `Bonus payload type ${payload.type} does not match deterministic outcome type ${payload.precomputedOutcome.type}`,
         path: ["precomputedOutcome", "type"]
+      });
+    }
+
+    if (payload.gameVariantId !== payload.precomputedOutcome.gameVariantId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Bonus payload variant does not match the deterministic outcome",
+        path: ["gameVariantId"]
+      });
+    }
+
+    if (
+      payload.precomputedOutcome.type === "FREE_GAMES" &&
+      payload.freeGamesModifierId !== payload.precomputedOutcome.modifierId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Bonus payload modifier does not match the deterministic outcome",
+        path: ["freeGamesModifierId"]
       });
     }
 
@@ -357,79 +348,48 @@ export const bonusSessionStatusSchema = z.enum([
 ]);
 export type BonusSessionStatus = z.infer<typeof bonusSessionStatusSchema>;
 
-export const bonusActionTypeSchema = z.enum([
-  "START",
-  "RESUME",
-  "RESPIN",
-  "WHEEL_STOP",
-  "PICK",
-  "CLAIM"
-]);
+export const bonusActionTypeSchema = z.enum(["START", "RESUME", "RESPIN", "FREE_GAME_SPIN", "CLAIM"]);
 export type BonusActionType = z.infer<typeof bonusActionTypeSchema>;
 
-export const bonusAdvanceActionTypeSchema = z.enum([
-  "RESPIN",
-  "WHEEL_STOP",
-  "PICK"
-]);
+export const bonusAdvanceActionTypeSchema = z.enum(["RESPIN", "FREE_GAME_SPIN"]);
 export type BonusAdvanceActionType = z.infer<typeof bonusAdvanceActionTypeSchema>;
 
-const emberRespinNextActionSchema = z.enum(["RESPIN", "CLAIM"]).nullable();
-const wheelNextActionSchema = z.enum(["WHEEL_STOP", "CLAIM"]).nullable();
-const relicVaultNextActionSchema = z.enum(["PICK", "CLAIM"]).nullable();
+const holdAndSpinNextActionSchema = z.enum(["RESPIN", "CLAIM"]).nullable();
+const freeGamesNextActionSchema = z.enum(["FREE_GAME_SPIN", "CLAIM"]).nullable();
 
-export const emberRespinProgressSchema = z.object({
-  type: z.literal("EMBER_RESPIN"),
+export const holdAndSpinProgressSchema = z.object({
+  type: z.literal("HOLD_AND_SPIN"),
   stepCursor: z.number().int().min(0),
   totalSteps: z.number().int().min(0),
   revealedOrbs: z.array(orbLandingSchema),
-  revealedSteps: z.array(emberRespinRevealStepSchema),
-  currentCollectorMultiplier: z.number().int().min(1),
+  revealedSteps: z.array(holdAndSpinRevealStepSchema),
   respinsRemaining: z.number().int().min(0).max(3),
   completed: z.boolean(),
   claimed: z.boolean(),
-  nextAction: emberRespinNextActionSchema
+  nextAction: holdAndSpinNextActionSchema
 });
-export type EmberRespinProgress = z.infer<typeof emberRespinProgressSchema>;
+export type HoldAndSpinProgress = z.infer<typeof holdAndSpinProgressSchema>;
+export const emberRespinProgressSchema = holdAndSpinProgressSchema;
+export type EmberRespinProgress = HoldAndSpinProgress;
 
-export const wheelAscensionProgressSchema = z.object({
-  type: z.literal("WHEEL_ASCENSION"),
+export const freeGamesProgressSchema = z.object({
+  type: z.literal("FREE_GAMES"),
   spinCursor: z.number().int().min(0),
   totalSpins: z.number().int().min(0),
-  revealedOutcomes: z.array(wheelOutcomeBySpinSchema),
+  revealedSpins: z.array(freeGameSpinRevealSchema),
   runningAward: z.number().nonnegative(),
+  retriggerCount: z.number().int().min(0),
+  gamesRemaining: z.number().int().min(0),
   completed: z.boolean(),
   claimed: z.boolean(),
-  nextAction: wheelNextActionSchema
+  nextAction: freeGamesNextActionSchema
 });
-export type WheelAscensionProgress = z.infer<typeof wheelAscensionProgressSchema>;
-
-export const relicVaultBoardStateSlotSchema = z.object({
-  slotId: z.string().min(1),
-  revealed: z.boolean(),
-  hidden: relicVaultHiddenSchema.optional(),
-  value: bonusValueSchema.optional()
-});
-export type RelicVaultBoardStateSlot = z.infer<typeof relicVaultBoardStateSlotSchema>;
-
-export const relicVaultProgressSchema = z.object({
-  type: z.literal("RELIC_VAULT_PICK"),
-  pickCursor: z.number().int().min(0),
-  totalPicks: z.number().int().min(0),
-  boardState: z.array(relicVaultBoardStateSlotSchema),
-  revealedPicks: z.array(relicVaultPickResultSchema),
-  runningAward: z.number().nonnegative(),
-  jackpotTierHits: z.array(jackpotTierSchema),
-  completed: z.boolean(),
-  claimed: z.boolean(),
-  nextAction: relicVaultNextActionSchema
-});
-export type RelicVaultProgress = z.infer<typeof relicVaultProgressSchema>;
+export type FreeGamesProgress = z.infer<typeof freeGamesProgressSchema>;
+export type FreeSpinsProgress = FreeGamesProgress;
 
 export const bonusProgressSchema = z.discriminatedUnion("type", [
-  emberRespinProgressSchema,
-  wheelAscensionProgressSchema,
-  relicVaultProgressSchema
+  holdAndSpinProgressSchema,
+  freeGamesProgressSchema
 ]);
 export type BonusProgress = z.infer<typeof bonusProgressSchema>;
 
@@ -523,24 +483,16 @@ export const spinRequestSchema = z.object({
   sessionId: z.string().min(1),
   playerId: z.string().min(1).optional(),
   bet: z.number().positive(),
-  lines: z.number().int().min(1).max(30).default(20),
+  lines: z.number().int().min(1).max(50).default(50),
   clientNonce: z.string().min(8),
   seed: z.union([z.number().int(), z.string().min(1)]).optional(),
   volatility: volatilityProfileSchema.default("medium"),
-  stance: freeQuestStanceSchema.default("relic")
+  gameVariantId: z.string().min(1).optional()
 });
 export type SpinRequest = z.infer<typeof spinRequestSchema>;
 
 function isTriggeredBonusType(triggers: TriggerFlags, bonusType: BonusType): boolean {
-  if (bonusType === "EMBER_RESPIN") {
-    return triggers.emberRespin;
-  }
-
-  if (bonusType === "WHEEL_ASCENSION") {
-    return triggers.wheelAscension;
-  }
-
-  return triggers.relicVaultPick;
+  return bonusType === "HOLD_AND_SPIN" ? triggers.holdAndSpin : triggers.freeGames;
 }
 
 export const spinResultSchema = z
@@ -556,8 +508,13 @@ export const spinResultSchema = z
     featureWin: z.number().nonnegative(),
     totalWin: z.number().nonnegative(),
     triggers: normalizedTriggerFlagsSchema,
-    emberLockState: emberLockStateSchema.optional(),
-    freeQuestState: freeQuestStateSchema.optional(),
+    gameVariantId: z.string().min(1),
+    freeGamesModifierId: freeGamesModifierSchema,
+    jackpotConfig: jackpotConfigSchema,
+    orbTriggerConfig: orbTriggerConfigSchema,
+    scatterTriggerConfig: scatterTriggerConfigSchema,
+    holdAndSpinState: holdAndSpinStateSchema.optional(),
+    freeGamesState: freeGamesStateSchema.optional(),
     bonusSessionRef: bonusSessionReferenceSchema.nullable().optional(),
     bonusPayload: bonusPayloadSchema.nullable().optional(),
     signature: z.string().min(16).optional()
@@ -597,7 +554,85 @@ export const simulationRequestSchema = z.object({
   spins: z.number().int().min(100).max(5000000),
   betPerSpin: z.number().positive(),
   seed: z.union([z.number().int(), z.string().min(1)]),
-  freeQuestStance: freeQuestStanceSchema.default("relic"),
+  freeGamesModifierId: freeGamesModifierSchema.default("ROYALS_REMOVED"),
   volatility: volatilityProfileSchema.default("medium")
 });
 export type SimulationRequest = z.infer<typeof simulationRequestSchema>;
+
+export const emberRespinRevealStepSchema = holdAndSpinRevealStepSchema;
+export type EmberRespinRevealStep = HoldAndSpinRevealStep;
+export const emberRespinCollectorLockSessionSchema = holdAndSpinSessionSchema;
+export type EmberRespinCollectorLockSession = HoldAndSpinSession;
+export type EmberRespinJackpotOrbHit = {
+  cell: number;
+  tier: JackpotTier;
+};
+export const emberRespinJackpotOrbHitSchema = z.object({
+  cell: z.number().int().min(0).max(14),
+  tier: jackpotTierSchema
+});
+
+export const wheelWedgeKindSchema = z.enum(["coin", "multiplier", "jackpot", "respin"]);
+export type WheelWedgeKind = z.infer<typeof wheelWedgeKindSchema>;
+
+export const wheelWedgeSchema = z.object({
+  wedgeId: z.string().min(1),
+  kind: wheelWedgeKindSchema,
+  value: z.union([z.number().nonnegative(), jackpotTierSchema])
+});
+export type WheelWedge = z.infer<typeof wheelWedgeSchema>;
+
+export const wheelOutcomeBySpinSchema = z.object({
+  wedgeId: z.string().min(1),
+  resolvedAward: z.number().nonnegative(),
+  jackpotTier: jackpotTierSchema.optional()
+});
+export type WheelOutcomeBySpin = z.infer<typeof wheelOutcomeBySpinSchema>;
+
+export const celestialWheelAscensionSessionSchema = z.object({
+  type: z.literal("WHEEL_ASCENSION"),
+  wedgeMap: z.array(wheelWedgeSchema),
+  awardedSpins: z.number().int().min(0),
+  maxSpins: z.number().int().min(1),
+  outcomesBySpin: z.array(wheelOutcomeBySpinSchema),
+  jackpotTierHits: z.array(jackpotTierSchema),
+  finalAward: z.number().nonnegative()
+});
+export type CelestialWheelAscensionSession = z.infer<typeof celestialWheelAscensionSessionSchema>;
+
+export const relicVaultHiddenSchema = z.enum(["coin", "multiplier", "jackpotTier", "bustShield"]);
+export type RelicVaultHidden = z.infer<typeof relicVaultHiddenSchema>;
+
+const bonusValueSchema = z.union([z.number().nonnegative(), jackpotTierSchema]);
+
+export const relicVaultBoardSlotSchema = z.object({
+  slotId: z.string().min(1),
+  hidden: relicVaultHiddenSchema,
+  value: bonusValueSchema.optional()
+});
+export type RelicVaultBoardSlot = z.infer<typeof relicVaultBoardSlotSchema>;
+
+export const relicVaultPickResultSchema = z.object({
+  pickIndex: z.number().int().min(1),
+  slotId: z.string().min(1),
+  hidden: relicVaultHiddenSchema,
+  value: bonusValueSchema.optional(),
+  awardDelta: z.number().nonnegative(),
+  runningAward: z.number().nonnegative(),
+  jackpotTierGranted: jackpotTierSchema.optional()
+});
+export type RelicVaultPickResult = z.infer<typeof relicVaultPickResultSchema>;
+
+export const relicVaultPickSessionSchema = z.object({
+  type: z.literal("RELIC_VAULT_PICK"),
+  keyCount: z.number().int().min(1),
+  board: z.array(relicVaultBoardSlotSchema),
+  picksAllowed: z.number().int().min(1),
+  picksMade: z.number().int().min(0),
+  revealed: z.array(z.string().min(1)),
+  guaranteedNonBustFirstPick: z.boolean(),
+  pickResults: z.array(relicVaultPickResultSchema),
+  jackpotTierHits: z.array(jackpotTierSchema),
+  finalAward: z.number().nonnegative()
+});
+export type RelicVaultPickSession = z.infer<typeof relicVaultPickSessionSchema>;

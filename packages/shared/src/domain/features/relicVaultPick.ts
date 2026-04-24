@@ -43,18 +43,18 @@ function pickFeaturedTier(seed: number | string): JackpotTier {
   const roll = rng.nextFloat();
 
   if (roll < 0.58) {
-    return "ember";
+    return "mini";
   }
 
   if (roll < 0.84) {
-    return "relic";
+    return "minor";
   }
 
   if (roll < 0.97) {
-    return "mythic";
+    return "major";
   }
 
-  return "throne";
+  return "grand";
 }
 
 function buildTokenDeck(featuredTier: JackpotTier): VaultToken[] {
@@ -113,10 +113,10 @@ export function resolveRelicVaultPick(input: ResolveRelicVaultPickInput): RelicV
   const revealed: string[] = [];
   const remaining = new Set<number>(board.map((_, index) => index));
   const jackpotMatchCounts: Record<JackpotTier, number> = {
-    ember: 0,
-    relic: 0,
-    mythic: 0,
-    throne: 0
+    mini: 0,
+    minor: 0,
+    major: 0,
+    grand: 0
   };
 
   const jackpotTierHits: JackpotTier[] = [];

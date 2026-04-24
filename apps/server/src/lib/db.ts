@@ -313,30 +313,28 @@ const defaultEntrySnapshot = (type: ServerBonusType): BonusFeatureShell => ({
   entryState: {},
 });
 
-const defaultFreeSpinsOutcome: ServerBonusOutcome = {
-  type: "FREE_SPINS",
-  stance: "relic",
-  initialSpins: 0,
-  totalAwardedSpins: 0,
+const defaultFreeGamesOutcome: ServerBonusOutcome = {
+  type: "FREE_GAMES",
+  gameVariantId: "dragon-link-flagship",
+  modifierId: "ROYALS_REMOVED",
+  initialGames: 0,
+  totalAwardedGames: 0,
   retriggerCount: 0,
-  multiplierLadder: [],
-  stickyWildState: [],
   steps: [],
-  finalAward: 0,
+  finalAward: 0
 };
 
-const defaultFreeSpinsProgress: ServerBonusProgress = {
-  type: "FREE_SPINS",
+const defaultFreeGamesProgress: ServerBonusProgress = {
+  type: "FREE_GAMES",
   spinCursor: 0,
   totalSpins: 0,
   revealedSpins: [],
   runningAward: 0,
   retriggerCount: 0,
-  spinsRemaining: 0,
-  multiplierLadder: [],
+  gamesRemaining: 0,
   completed: true,
   claimed: false,
-  nextAction: "CLAIM",
+  nextAction: "CLAIM"
 };
 
 const parseJsonObject = <T>(value: string | null | undefined, fallback: T): T => {
@@ -403,8 +401,8 @@ const toBonusSessionRecord = (row: BonusSessionRow): BonusSessionRecord => ({
   actualAward: row.actual_award,
   jackpotTiersHit: parseJsonObject<JackpotTier[]>(row.jackpot_tiers_json, []),
   jackpotAwards: parseJsonObject<BonusJackpotAward[]>(row.jackpot_awards_json, []),
-  outcome: parseJsonObject<ServerBonusOutcome>(row.outcome_json, defaultFreeSpinsOutcome),
-  progress: parseJsonObject<ServerBonusProgress>(row.progress_json, defaultFreeSpinsProgress),
+  outcome: parseJsonObject<ServerBonusOutcome>(row.outcome_json, defaultFreeGamesOutcome),
+  progress: parseJsonObject<ServerBonusProgress>(row.progress_json, defaultFreeGamesProgress),
   mathProfileVersionId: row.math_profile_version_id ?? DEFAULT_MATH_PROFILE_VERSION_ID,
   entrySnapshot: parseJsonObject<BonusFeatureShell>(row.entry_snapshot_json, defaultEntrySnapshot(row.type)),
   createdAt: row.created_at,
@@ -827,15 +825,15 @@ export class ServerDb {
       }
 
       const contribution = Math.max(1, Math.floor(input.jackpotContributionBet * 0.05));
-      const ember = Math.floor(contribution * 0.4);
-      const relic = Math.floor(contribution * 0.3);
-      const mythic = Math.floor(contribution * 0.2);
-      const throne = contribution - ember - relic - mythic;
+      const mini = Math.floor(contribution * 0.4);
+      const minor = Math.floor(contribution * 0.3);
+      const major = Math.floor(contribution * 0.2);
+      const grand = contribution - mini - minor - major;
 
-      this.bumpJackpot("ember", ember, now);
-      this.bumpJackpot("relic", relic, now);
-      this.bumpJackpot("mythic", mythic, now);
-      this.bumpJackpot("throne", throne, now);
+      this.bumpJackpot("mini", mini, now);
+      this.bumpJackpot("minor", minor, now);
+      this.bumpJackpot("major", major, now);
+      this.bumpJackpot("grand", grand, now);
 
       const payoutTiers = new Set<JackpotTier>();
       if (input.jackpotPayoutTier) {
@@ -969,7 +967,7 @@ export class ServerDb {
   public getJackpots(): JackpotRecord[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM jackpots ORDER BY CASE tier WHEN 'ember' THEN 1 WHEN 'relic' THEN 2 WHEN 'mythic' THEN 3 ELSE 4 END",
+        "SELECT * FROM jackpots ORDER BY CASE tier WHEN 'mini' THEN 1 WHEN 'minor' THEN 2 WHEN 'major' THEN 3 ELSE 4 END",
       )
       .all() as JackpotRow[];
 
@@ -978,17 +976,17 @@ export class ServerDb {
 
   public applyJackpotContribution(sourceBet: number): JackpotRecord[] {
     const contribution = Math.max(1, Math.floor(sourceBet * 0.05));
-    const ember = Math.floor(contribution * 0.4);
-    const relic = Math.floor(contribution * 0.3);
-    const mythic = Math.floor(contribution * 0.2);
-    const throne = contribution - ember - relic - mythic;
+    const mini = Math.floor(contribution * 0.4);
+    const minor = Math.floor(contribution * 0.3);
+    const major = Math.floor(contribution * 0.2);
+    const grand = contribution - mini - minor - major;
 
     const now = new Date().toISOString();
     const tx = this.db.transaction(() => {
-      this.bumpJackpot("ember", ember, now);
-      this.bumpJackpot("relic", relic, now);
-      this.bumpJackpot("mythic", mythic, now);
-      this.bumpJackpot("throne", throne, now);
+      this.bumpJackpot("mini", mini, now);
+      this.bumpJackpot("minor", minor, now);
+      this.bumpJackpot("major", major, now);
+      this.bumpJackpot("grand", grand, now);
     });
 
     tx();
@@ -1053,10 +1051,10 @@ export class ServerDb {
       "INSERT OR IGNORE INTO jackpots (tier, amount, updated_at) VALUES (?, ?, ?)",
     );
 
-    insert.run("ember", JACKPOT_RESET_AMOUNTS.ember, now);
-    insert.run("relic", JACKPOT_RESET_AMOUNTS.relic, now);
-    insert.run("mythic", JACKPOT_RESET_AMOUNTS.mythic, now);
-    insert.run("throne", JACKPOT_RESET_AMOUNTS.throne, now);
+    insert.run("mini", JACKPOT_RESET_AMOUNTS.mini, now);
+    insert.run("minor", JACKPOT_RESET_AMOUNTS.minor, now);
+    insert.run("major", JACKPOT_RESET_AMOUNTS.major, now);
+    insert.run("grand", JACKPOT_RESET_AMOUNTS.grand, now);
   }
 
   private seedMathProfileVersion(): void {

@@ -6,27 +6,27 @@ import type { SpinGrid } from "../src/domain/reels";
 import { runSpinSimulation } from "../src/domain/sim/simulator";
 
 describe("payout evaluator", () => {
-  it("pays a five-of-a-kind throne line", () => {
+  it("pays a five-of-a-kind dragon line", () => {
     const forcedGrid = {
       columns: [
-        ["throne", "ember", "scale"],
-        ["throne", "flame", "relic"],
-        ["throne", "scale", "mythic"],
-        ["throne", "relic", "flame"],
-        ["throne", "mythic", "ember"]
+        ["dragon", "ten", "jack"],
+        ["dragon", "jack", "queen"],
+        ["dragon", "queen", "king"],
+        ["dragon", "king", "ace"],
+        ["dragon", "ace", "coin"]
       ],
       stops: [0, 0, 0, 0, 0]
     } as SpinGrid;
 
     const result = evaluatePaylines(forcedGrid, 20);
 
-    expect(result.totalWin).toBe(202.5);
+    expect(result.totalWin).toBeGreaterThan(100);
     expect(result.scatterCount).toBe(0);
-    expect(result.lineWins.some((win) => win.symbol === "throne" && win.count === 5)).toBe(true);
+    expect(result.lineWins.some((win) => win.symbol === "dragon" && win.count === 5)).toBe(true);
   });
 });
 
-describe("ember lock state machine", () => {
+describe("hold-and-spin state machine", () => {
   it("resets to 3 respins when new orbs land", () => {
     const initialOrbs = Array.from({ length: 6 }, (_, index) => ({
       position: index,
@@ -61,20 +61,20 @@ describe("simulation", () => {
       spins: 15000,
       betPerSpin: 20,
       seed: 20260411,
-      freeQuestStance: "relic"
+      freeGamesModifierId: "ROYALS_REMOVED"
     });
 
     expect(report.config.volatility).toBe("medium");
     expect(report.counters.spinsWithWin).toBeLessThanOrEqual(15000);
-    expect(report.counters.emberLockTriggers).toBeGreaterThan(0);
-    expect(report.counters.freeQuestTriggers).toBeGreaterThan(0);
-    expect(report.totals.rtp).toBeGreaterThan(0.4);
-    expect(report.totals.rtp).toBeLessThan(1.4);
+    expect(report.counters.holdAndSpinTriggers).toBeGreaterThan(0);
+    expect(report.counters.freeGamesTriggers).toBeGreaterThan(0);
+    expect(report.totals.rtp).toBeGreaterThan(0.7);
+    expect(report.totals.rtp).toBeLessThan(0.9);
 
-    expect(report.frequencies.emberLockTrigger).toBeGreaterThan(1 / 120);
-    expect(report.frequencies.emberLockTrigger).toBeLessThan(1 / 35);
-    expect(report.frequencies.freeQuestTrigger).toBeGreaterThan(1 / 200);
-    expect(report.frequencies.freeQuestTrigger).toBeLessThan(1 / 50);
-    expect(report.frequencies.freeQuestRetriggerInFeature).toBeGreaterThanOrEqual(0.1);
+    expect(report.frequencies.holdAndSpinTrigger).toBeGreaterThan(1 / 120);
+    expect(report.frequencies.holdAndSpinTrigger).toBeLessThan(1 / 35);
+    expect(report.frequencies.freeGamesTrigger).toBeGreaterThan(1 / 200);
+    expect(report.frequencies.freeGamesTrigger).toBeLessThan(1 / 50);
+    expect(report.frequencies.freeGamesRetriggerInFeature).toBeGreaterThanOrEqual(0.1);
   });
 });

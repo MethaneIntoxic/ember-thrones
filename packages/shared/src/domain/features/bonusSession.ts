@@ -7,13 +7,9 @@ import {
   type BonusSessionRecord,
   type BonusSessionStatus,
   type BonusType,
-  type EmberRespinProgress,
-  type JackpotTier,
-  type OrbLanding,
-  type RelicVaultBoardStateSlot,
-  type RelicVaultPickResult,
-  type RelicVaultProgress,
-  type WheelAscensionProgress
+  type FreeGamesProgress,
+  type HoldAndSpinProgress,
+  type OrbLanding
 } from "../../contracts/api";
 
 export interface BonusSessionSeed {
@@ -26,7 +22,7 @@ export interface BonusSessionSeed {
   revealSeed: string;
   expectedTotalAward: number;
   actualAward: number;
-  jackpotTiersHit: JackpotTier[];
+  jackpotTiersHit: ReturnType<typeof collectBonusSessionJackpotTiers>;
   jackpotAwards: BonusJackpotAward[];
   outcome: BonusOutcome;
   progress: BonusProgress;
@@ -49,46 +45,18 @@ function dedupeOrbLandings(landings: readonly OrbLanding[]): OrbLanding[] {
   return [...byPosition.values()].sort((left, right) => left.position - right.position);
 }
 
-function assertBonusSessionAlignment(
-  session: Pick<BonusSessionRecord, "type" | "outcome" | "progress">
-): void {
+function assertBonusSessionAlignment(session: Pick<BonusSessionRecord, "type" | "outcome" | "progress">): void {
   if (session.type !== session.outcome.type) {
     throw new Error(`Bonus session type ${session.type} does not match outcome type ${session.outcome.type}`);
   }
 
   if (session.type !== session.progress.type) {
-    throw new Error(
-      `Bonus session type ${session.type} does not match progress type ${session.progress.type}`
-    );
+    throw new Error(`Bonus session type ${session.type} does not match progress type ${session.progress.type}`);
   }
 }
 
-function buildVaultBoardState(
-  outcome: Extract<BonusOutcome, { type: "RELIC_VAULT_PICK" }>,
-  revealedPicks: readonly RelicVaultPickResult[]
-): RelicVaultBoardStateSlot[] {
-  const revealBySlotId = new Map(revealedPicks.map((pick) => [pick.slotId, pick]));
-
-  return outcome.board.map((slot) => {
-    const revealedPick = revealBySlotId.get(slot.slotId);
-    if (!revealedPick) {
-      return {
-        slotId: slot.slotId,
-        revealed: false
-      };
-    }
-
-    return {
-      slotId: slot.slotId,
-      revealed: true,
-      hidden: revealedPick.hidden,
-      ...(revealedPick.value !== undefined ? { value: revealedPick.value } : {})
-    };
-  });
-}
-
 export function createInitialBonusProgress(outcome: BonusOutcome): BonusProgress {
-  if (outcome.type === "EMBER_RESPIN") {
+  if (outcome.type === "HOLD_AND_SPIN") {
     const completed = outcome.steps.length === 0;
 
     return {
@@ -97,42 +65,25 @@ export function createInitialBonusProgress(outcome: BonusOutcome): BonusProgress
       totalSteps: outcome.steps.length,
       revealedOrbs: dedupeOrbLandings(outcome.startingOrbs),
       revealedSteps: [],
-      currentCollectorMultiplier: 1,
-      respinsRemaining: 3,
+      respinsRemaining: Math.min(3, Math.max(0, outcome.respinsRemaining || 3)),
       completed,
       claimed: false,
       nextAction: completed ? "CLAIM" : "RESPIN"
     };
   }
 
-  if (outcome.type === "WHEEL_ASCENSION") {
-    const completed = outcome.outcomesBySpin.length === 0;
-
-    return {
-      type: outcome.type,
-      spinCursor: 0,
-      totalSpins: outcome.outcomesBySpin.length,
-      revealedOutcomes: [],
-      runningAward: 0,
-      completed,
-      claimed: false,
-      nextAction: completed ? "CLAIM" : "WHEEL_STOP"
-    };
-  }
-
-  const completed = outcome.pickResults.length === 0;
-
+  const completed = outcome.steps.length === 0;
   return {
     type: outcome.type,
-    pickCursor: 0,
-    totalPicks: outcome.pickResults.length,
-    boardState: buildVaultBoardState(outcome, []),
-    revealedPicks: [],
+    spinCursor: 0,
+    totalSpins: outcome.steps.length,
+    revealedSpins: [],
     runningAward: 0,
-    jackpotTierHits: [],
+    retriggerCount: 0,
+    gamesRemaining: outcome.initialGames,
     completed,
     claimed: false,
-    nextAction: completed ? "CLAIM" : "PICK"
+    nextAction: completed ? "CLAIM" : "FREE_GAME_SPIN"
   };
 }
 
@@ -171,7 +122,6 @@ export function resumeBonusSession(session: BonusSessionRecord): BonusSessionSta
   }
 
   const status = session.status === "PENDING" ? "ACTIVE" : session.status;
-
   return {
     progress: session.progress,
     status,
@@ -185,12 +135,12 @@ export function resumeBonusSession(session: BonusSessionRecord): BonusSessionSta
   };
 }
 
-function advanceEmberRespin(session: BonusSessionRecord): BonusSessionStateMutation {
+function advanceHoldAndSpin(session: BonusSessionRecord): BonusSessionStateMutation {
   const outcome = session.outcome;
   const progress = session.progress;
 
-  if (outcome.type !== "EMBER_RESPIN" || progress.type !== "EMBER_RESPIN") {
-    throw new Error("Bonus session is not an ember respin session");
+  if (outcome.type !== "HOLD_AND_SPIN" || progress.type !== "HOLD_AND_SPIN") {
+    throw new Error("Bonus session is not a hold-and-spin session");
   }
 
   const nextStep = outcome.steps[progress.stepCursor];
@@ -200,12 +150,11 @@ function advanceEmberRespin(session: BonusSessionRecord): BonusSessionStateMutat
 
   const nextCursor = progress.stepCursor + 1;
   const completed = nextCursor >= progress.totalSteps;
-  const nextProgress: EmberRespinProgress = {
+  const nextProgress: HoldAndSpinProgress = {
     ...progress,
     stepCursor: nextCursor,
     revealedOrbs: dedupeOrbLandings([...progress.revealedOrbs, ...nextStep.landedOrbs]),
     revealedSteps: [...progress.revealedSteps, nextStep],
-    currentCollectorMultiplier: nextStep.collectorMultiplier,
     respinsRemaining: nextStep.respinsRemainingAfter,
     completed,
     nextAction: completed ? "CLAIM" : "RESPIN"
@@ -221,35 +170,35 @@ function advanceEmberRespin(session: BonusSessionRecord): BonusSessionStateMutat
       totalSteps: progress.totalSteps,
       nextAction: nextProgress.nextAction,
       completed,
-      currentCollectorMultiplier: nextProgress.currentCollectorMultiplier,
       respinsRemaining: nextProgress.respinsRemaining
     }
   };
 }
 
-function advanceWheelAscension(session: BonusSessionRecord): BonusSessionStateMutation {
+function advanceFreeGames(session: BonusSessionRecord): BonusSessionStateMutation {
   const outcome = session.outcome;
   const progress = session.progress;
 
-  if (outcome.type !== "WHEEL_ASCENSION" || progress.type !== "WHEEL_ASCENSION") {
-    throw new Error("Bonus session is not a wheel ascension session");
+  if (outcome.type !== "FREE_GAMES" || progress.type !== "FREE_GAMES") {
+    throw new Error("Bonus session is not a free-games session");
   }
 
-  const nextOutcome = outcome.outcomesBySpin[progress.spinCursor];
-  if (!nextOutcome) {
-    throw new Error("No wheel stop remains for this bonus session");
+  const nextSpin = outcome.steps[progress.spinCursor];
+  if (!nextSpin) {
+    throw new Error("No free game remains for this bonus session");
   }
 
   const nextCursor = progress.spinCursor + 1;
   const completed = nextCursor >= progress.totalSpins;
-  const nextRunningAward = progress.runningAward + nextOutcome.resolvedAward;
-  const nextProgress: WheelAscensionProgress = {
+  const nextProgress: FreeGamesProgress = {
     ...progress,
     spinCursor: nextCursor,
-    revealedOutcomes: [...progress.revealedOutcomes, nextOutcome],
-    runningAward: nextRunningAward,
+    revealedSpins: [...progress.revealedSpins, nextSpin],
+    runningAward: nextSpin.runningAward,
+    retriggerCount: progress.retriggerCount + (nextSpin.retriggered ? 1 : 0),
+    gamesRemaining: nextSpin.gamesRemainingAfter,
     completed,
-    nextAction: completed ? "CLAIM" : "WHEEL_STOP"
+    nextAction: completed ? "CLAIM" : "FREE_GAME_SPIN"
   };
 
   return {
@@ -257,58 +206,13 @@ function advanceWheelAscension(session: BonusSessionRecord): BonusSessionStateMu
     status: completed ? "COMPLETED" : "ACTIVE",
     actualAward: completed ? session.expectedTotalAward : session.actualAward,
     resultPayload: {
-      revealedOutcome: nextOutcome,
+      revealedSpin: nextSpin,
       spinCursor: nextCursor,
       totalSpins: progress.totalSpins,
       nextAction: nextProgress.nextAction,
       completed,
-      runningAward: nextRunningAward
-    }
-  };
-}
-
-function advanceRelicVault(session: BonusSessionRecord): BonusSessionStateMutation {
-  const outcome = session.outcome;
-  const progress = session.progress;
-
-  if (outcome.type !== "RELIC_VAULT_PICK" || progress.type !== "RELIC_VAULT_PICK") {
-    throw new Error("Bonus session is not a relic vault session");
-  }
-
-  const nextPick = outcome.pickResults[progress.pickCursor];
-  if (!nextPick) {
-    throw new Error("No pick remains for this bonus session");
-  }
-
-  const nextCursor = progress.pickCursor + 1;
-  const nextRevealedPicks = [...progress.revealedPicks, nextPick];
-  const nextJackpotTierHits = nextPick.jackpotTierGranted
-    ? [...new Set([...progress.jackpotTierHits, nextPick.jackpotTierGranted])]
-    : progress.jackpotTierHits;
-  const completed = nextCursor >= progress.totalPicks;
-  const nextProgress: RelicVaultProgress = {
-    ...progress,
-    pickCursor: nextCursor,
-    boardState: buildVaultBoardState(outcome, nextRevealedPicks),
-    revealedPicks: nextRevealedPicks,
-    runningAward: nextPick.runningAward,
-    jackpotTierHits: nextJackpotTierHits,
-    completed,
-    nextAction: completed ? "CLAIM" : "PICK"
-  };
-
-  return {
-    progress: nextProgress,
-    status: completed ? "COMPLETED" : "ACTIVE",
-    actualAward: completed ? session.expectedTotalAward : session.actualAward,
-    resultPayload: {
-      revealedPick: nextPick,
-      pickCursor: nextCursor,
-      totalPicks: progress.totalPicks,
-      nextAction: nextProgress.nextAction,
-      completed,
       runningAward: nextProgress.runningAward,
-      jackpotTierHits: nextProgress.jackpotTierHits
+      gamesRemaining: nextProgress.gamesRemaining
     }
   };
 }
@@ -331,42 +235,7 @@ export function advanceBonusSession(
     throw new Error(`Expected ${session.progress.nextAction} but received ${actionType}`);
   }
 
-  if (actionType === "RESPIN") {
-    return advanceEmberRespin(session);
-  }
-
-  if (actionType === "WHEEL_STOP") {
-    return advanceWheelAscension(session);
-  }
-
-  return advanceRelicVault(session);
-}
-
-function markClaimedProgress(progress: BonusProgress): BonusProgress {
-  if (progress.type === "EMBER_RESPIN") {
-    return {
-      ...progress,
-      claimed: true,
-      completed: true,
-      nextAction: null
-    };
-  }
-
-  if (progress.type === "WHEEL_ASCENSION") {
-    return {
-      ...progress,
-      claimed: true,
-      completed: true,
-      nextAction: null
-    };
-  }
-
-  return {
-    ...progress,
-    claimed: true,
-    completed: true,
-    nextAction: null
-  };
+  return actionType === "RESPIN" ? advanceHoldAndSpin(session) : advanceFreeGames(session);
 }
 
 export function claimBonusSession(session: BonusSessionRecord): BonusSessionStateMutation {
@@ -384,7 +253,12 @@ export function claimBonusSession(session: BonusSessionRecord): BonusSessionStat
     throw new Error("Bonus session must be completed before it can be claimed");
   }
 
-  const progress = markClaimedProgress(session.progress);
+  const progress: BonusProgress = {
+    ...session.progress,
+    claimed: true,
+    completed: true,
+    nextAction: null
+  };
 
   return {
     progress,

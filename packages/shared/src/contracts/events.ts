@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  freeQuestStanceSchema,
+  freeGamesModifierSchema,
   jackpotTierSchema,
   normalizedTriggerFlagsSchema,
   volatilityProfileSchema
@@ -35,51 +35,51 @@ export const spinResolvedEventSchema = eventBaseSchema.extend({
   })
 });
 
-export const emberLockEnteredEventSchema = eventBaseSchema.extend({
-  type: z.literal("feature.emberLock.entered"),
+export const holdAndSpinEnteredEventSchema = eventBaseSchema.extend({
+  type: z.literal("feature.holdAndSpin.entered"),
   payload: z.object({
     orbCount: z.number().int().min(6),
     minimumRequired: z.literal(6)
   })
 });
 
-export const emberLockResolvedEventSchema = eventBaseSchema.extend({
-  type: z.literal("feature.emberLock.resolved"),
+export const holdAndSpinResolvedEventSchema = eventBaseSchema.extend({
+  type: z.literal("feature.holdAndSpin.resolved"),
   payload: z.object({
     totalWin: z.number().nonnegative(),
     orbCount: z.number().int().min(6),
     jackpotHits: z.object({
-      ember: z.number().int().min(0),
-      relic: z.number().int().min(0),
-      mythic: z.number().int().min(0),
-      throne: z.number().int().min(0)
+      mini: z.number().int().min(0),
+      minor: z.number().int().min(0),
+      major: z.number().int().min(0),
+      grand: z.number().int().min(0)
     })
   })
 });
 
-export const freeQuestStartedEventSchema = eventBaseSchema.extend({
-  type: z.literal("feature.freeQuest.started"),
+export const freeGamesStartedEventSchema = eventBaseSchema.extend({
+  type: z.literal("feature.freeGames.started"),
   payload: z.object({
-    stance: freeQuestStanceSchema,
-    awardedSpins: z.number().int().positive(),
+    modifierId: freeGamesModifierSchema,
+    awardedGames: z.number().int().positive(),
     triggerScatters: z.number().int().min(3)
   })
 });
 
-export const freeQuestRetriggeredEventSchema = eventBaseSchema.extend({
-  type: z.literal("feature.freeQuest.retriggered"),
+export const freeGamesRetriggeredEventSchema = eventBaseSchema.extend({
+  type: z.literal("feature.freeGames.retriggered"),
   payload: z.object({
-    stance: freeQuestStanceSchema,
-    awardedSpins: z.number().int().positive(),
+    modifierId: freeGamesModifierSchema,
+    awardedGames: z.number().int().positive(),
     retriggerCount: z.number().int().min(1),
     chanceUsed: z.number().min(0).max(1)
   })
 });
 
-export const freeQuestCompletedEventSchema = eventBaseSchema.extend({
-  type: z.literal("feature.freeQuest.completed"),
+export const freeGamesCompletedEventSchema = eventBaseSchema.extend({
+  type: z.literal("feature.freeGames.completed"),
   payload: z.object({
-    stance: freeQuestStanceSchema,
+    modifierId: freeGamesModifierSchema,
     totalWin: z.number().nonnegative(),
     retriggerCount: z.number().int().min(0)
   })
@@ -96,12 +96,18 @@ export const jackpotHitEventSchema = eventBaseSchema.extend({
 export const domainEventSchema = z.discriminatedUnion("type", [
   spinRequestedEventSchema,
   spinResolvedEventSchema,
-  emberLockEnteredEventSchema,
-  emberLockResolvedEventSchema,
-  freeQuestStartedEventSchema,
-  freeQuestRetriggeredEventSchema,
-  freeQuestCompletedEventSchema,
+  holdAndSpinEnteredEventSchema,
+  holdAndSpinResolvedEventSchema,
+  freeGamesStartedEventSchema,
+  freeGamesRetriggeredEventSchema,
+  freeGamesCompletedEventSchema,
   jackpotHitEventSchema
 ]);
+
+export const emberLockEnteredEventSchema = holdAndSpinEnteredEventSchema;
+export const emberLockResolvedEventSchema = holdAndSpinResolvedEventSchema;
+export const freeQuestStartedEventSchema = freeGamesStartedEventSchema;
+export const freeQuestRetriggeredEventSchema = freeGamesRetriggeredEventSchema;
+export const freeQuestCompletedEventSchema = freeGamesCompletedEventSchema;
 
 export type DomainEvent = z.infer<typeof domainEventSchema>;

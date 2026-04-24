@@ -12,10 +12,10 @@ import {
   type BonusPayload,
   type BonusType,
   type ConfigResponse,
-  type EmberLockStatus,
   type FeatureSessionState,
   type FeatureSessionTransport,
-  type FreeQuestStatus,
+  type FreeGamesStatus,
+  type HoldAndSpinStatus,
   type JackpotTier,
   type ProfileResponse,
   type SpinSpeedMode,
@@ -42,9 +42,14 @@ export interface ActiveBonusPresentation {
   type: BonusType;
   sessionId: string;
   revealSeed: string;
+  gameVariantId: string;
+  freeGamesModifierId: BonusPayload["freeGamesModifierId"];
   expectedTotalAward: number;
   jackpotTiersHit: BonusPayload["jackpotTiersHit"];
   jackpotAwards: BonusPayload["jackpotAwards"];
+  jackpotConfig: BonusPayload["jackpotConfig"];
+  orbTriggerConfig: BonusPayload["orbTriggerConfig"];
+  scatterTriggerConfig: BonusPayload["scatterTriggerConfig"];
   precomputedOutcome: Record<string, unknown>;
   featureSession: FeatureSessionState;
   transport: FeatureSessionTransport;
@@ -53,18 +58,12 @@ export interface ActiveBonusPresentation {
   source: BonusSource;
 }
 
-export interface ProgressionState {
-  forgeMeter: number;
-  relicShards: number;
-  dailyQuestProgress: number;
-}
-
-const DEFAULT_REELS: string[][] = [
-  ["DRG", "ORB", "SCT"],
-  ["CHS", "RNE", "CRN"],
-  ["DRG", "WLD", "ORB"],
-  ["SCT", "CHS", "RNE"],
-  ["CRN", "DRG", "ORB"]
+const DEFAULT_REELS = [
+  ["dragon", "orb", "scatter"],
+  ["coin", "lantern", "ingot"],
+  ["dragon", "wild", "orb"],
+  ["scatter", "coin", "lantern"],
+  ["ingot", "dragon", "orb"]
 ];
 
 const DEFAULT_WALLET: WalletState = {
@@ -75,28 +74,23 @@ const DEFAULT_WALLET: WalletState = {
 };
 
 const DEFAULT_JACKPOT: JackpotLadder = {
-  ember: 1200,
-  relic: 3800,
-  mythic: 9500,
-  throne: 28000
+  mini: 5000,
+  minor: 25000,
+  major: 100000,
+  grand: 1000000
 };
 
-const DEFAULT_EMBER_LOCK: EmberLockStatus = {
+const DEFAULT_HOLD_AND_SPIN: HoldAndSpinStatus = {
   active: false,
-  lockedCells: 0,
+  lockedCount: 0,
   respinsRemaining: 0
 };
 
-const DEFAULT_FREE_QUEST: FreeQuestStatus = {
+const DEFAULT_FREE_GAMES: FreeGamesStatus = {
   active: false,
-  spinsRemaining: 0,
-  retriggers: 0
-};
-
-const DEFAULT_PROGRESSION: ProgressionState = {
-  forgeMeter: 0,
-  relicShards: 0,
-  dailyQuestProgress: 0
+  gamesRemaining: 0,
+  retriggers: 0,
+  modifierId: "ROYALS_REMOVED"
 };
 
 function getOnlineStatus(): boolean {
@@ -131,9 +125,14 @@ function toBonusPresentation(
     type: payload.type,
     sessionId: payload.sessionId,
     revealSeed: payload.revealSeed,
+    gameVariantId: payload.gameVariantId,
+    freeGamesModifierId: payload.freeGamesModifierId,
     expectedTotalAward: payload.expectedTotalAward,
     jackpotTiersHit: payload.jackpotTiersHit,
     jackpotAwards: payload.jackpotAwards,
+    jackpotConfig: payload.jackpotConfig,
+    orbTriggerConfig: payload.orbTriggerConfig,
+    scatterTriggerConfig: payload.scatterTriggerConfig,
     precomputedOutcome: payload.precomputedOutcome,
     featureSession: payload.featureSession,
     transport: payload.transport,
@@ -252,29 +251,8 @@ function applySpinToState(
 ): void {
   const current = get();
   const runtimeState = buildRuntimeDerivedState(current.eventStreamState);
-  const emberTriggered =
-    result.triggers.includes("EMBER_RESPIN") || result.triggers.includes("EMBER_LOCK");
-  const freeQuestTriggered = result.triggers.includes("FREE_QUEST");
-  const relicTriggered = result.triggers.includes("RELIC_VAULT");
-  const anyBonusTriggered = result.triggers.includes("BONUS") || result.bonusPayload !== null;
-  const forgeGain =
-    1 +
-    Math.floor(result.winCoins / 75) +
-    (emberTriggered ? 3 : 0) +
-    (freeQuestTriggered ? 2 : 0) +
-    (anyBonusTriggered ? 2 : 0);
-  const relicShardGain = relicTriggered ? 2 : 0;
-  const nextProgression: ProgressionState = {
-    forgeMeter: current.progression.forgeMeter + forgeGain,
-    relicShards: current.progression.relicShards + relicShardGain,
-    dailyQuestProgress: current.progression.dailyQuestProgress + 1
-  };
-  const nextBonus = result.bonusPayload
-    ? toBonusPresentation(result.spinId, result.bonusPayload, "spin")
-    : null;
-  const nextSessions = nextBonus
-    ? upsertBonusSession(current.bonusSessions, nextBonus)
-    : current.bonusSessions;
+  const nextBonus = result.bonusPayload ? toBonusPresentation(result.spinId, result.bonusPayload, "spin") : null;
+  const nextSessions = nextBonus ? upsertBonusSession(current.bonusSessions, nextBonus) : current.bonusSessions;
 
   set({
     reels: result.reels,
@@ -282,11 +260,10 @@ function applySpinToState(
     lastWin: result.winCoins,
     wallet: result.wallet,
     jackpotLadder: result.jackpotLadder,
-    emberLock: result.emberLock,
-    freeQuest: result.freeQuest,
+    holdAndSpin: result.holdAndSpin,
+    freeGames: result.freeGames,
     activeBonus: nextBonus,
     bonusSessions: nextSessions,
-    progression: nextProgression,
     apiMode: apiClient.mode,
     ...runtimeState,
     error
@@ -305,9 +282,8 @@ export interface GameStore {
   eventStreamState: EventStreamState;
   wallet: WalletState;
   jackpotLadder: JackpotLadder;
-  emberLock: EmberLockStatus;
-  freeQuest: FreeQuestStatus;
-  progression: ProgressionState;
+  holdAndSpin: HoldAndSpinStatus;
+  freeGames: FreeGamesStatus;
   reels: string[][];
   winLines: number[];
   lastWin: number;
@@ -357,9 +333,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   eventStreamState: initialEventStreamState,
   wallet: DEFAULT_WALLET,
   jackpotLadder: DEFAULT_JACKPOT,
-  emberLock: DEFAULT_EMBER_LOCK,
-  freeQuest: DEFAULT_FREE_QUEST,
-  progression: DEFAULT_PROGRESSION,
+  holdAndSpin: DEFAULT_HOLD_AND_SPIN,
+  freeGames: DEFAULT_FREE_GAMES,
   reels: DEFAULT_REELS,
   winLines: [],
   lastWin: 0,
@@ -416,36 +391,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     const online = getOnlineStatus();
-    const request = createSpinRequest(
-      state.sessionId,
-      state.wager,
-      state.profile?.playerId ?? "local-dragon"
-    );
+    const request = createSpinRequest(state.sessionId, state.wager, state.profile?.playerId ?? "local-dragon");
 
     set({ spinning: true, online, error: undefined });
 
     const runtimeCapabilities = resolveCurrentRuntimeCapabilities();
-
     if (runtimeCapabilities.experience === "demo") {
       try {
         const result = await apiClient.spin(request);
         applySpinToState(result, set, get);
       } finally {
         const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
-        set({
-          spinning: false,
-          online,
-          apiMode: apiClient.mode,
-          ...runtimeState
-        });
+        set({ spinning: false, online, apiMode: apiClient.mode, ...runtimeState });
       }
-
       return;
     }
 
     if (!online) {
       enqueueOfflineSpin(request);
-
       const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
       set({
         spinning: false,
@@ -465,7 +428,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (error instanceof RemoteAuthoritativeUnavailableError) {
         enqueueOfflineSpin(request);
         const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
-
         set({
           online: getOnlineStatus(),
           apiMode: apiClient.mode,
@@ -512,7 +474,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     );
 
     const runtimeState = buildRuntimeDerivedState(get().eventStreamState);
-
     if (drainResult.lastResult) {
       applySpinToState(
         drainResult.lastResult,
@@ -548,12 +509,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setBet: (value) => {
     const state = get();
     const estimatedCredits = Math.max(1, Math.round(value / Math.max(1, state.wager.denomination)));
-    const nextState = deriveWagerState(
-      state.config,
-      state.mathConfig,
-      nextWagerSelection(state.wager, { creditsPerSpin: estimatedCredits })
+    set(
+      deriveWagerState(
+        state.config,
+        state.mathConfig,
+        nextWagerSelection(state.wager, { creditsPerSpin: estimatedCredits })
+      )
     );
-    set(nextState);
   },
 
   adjustBet: (delta) => {
@@ -562,46 +524,50 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setDenomination: (value) => {
     const state = get();
-    const nextState = deriveWagerState(
-      state.config,
-      state.mathConfig,
-      nextWagerSelection(state.wager, { denomination: value })
+    set(
+      deriveWagerState(
+        state.config,
+        state.mathConfig,
+        nextWagerSelection(state.wager, { denomination: value })
+      )
     );
-    set(nextState);
   },
 
   setCreditsPerSpin: (value) => {
     const state = get();
-    const nextState = deriveWagerState(
-      state.config,
-      state.mathConfig,
-      nextWagerSelection(state.wager, { creditsPerSpin: value })
+    set(
+      deriveWagerState(
+        state.config,
+        state.mathConfig,
+        nextWagerSelection(state.wager, { creditsPerSpin: value })
+      )
     );
-    set(nextState);
   },
 
   setSpeedMode: (value) => {
     const state = get();
-    const nextState = deriveWagerState(
-      state.config,
-      state.mathConfig,
-      nextWagerSelection(state.wager, { speedMode: value })
+    set(
+      deriveWagerState(
+        state.config,
+        state.mathConfig,
+        nextWagerSelection(state.wager, { speedMode: value })
+      )
     );
-    set(nextState);
   },
 
   setMaxBet: () => {
     const state = get();
     const maxWager = getMaxBetSelection(state.mathConfig, currentWagerConstraints(state.config));
-    const nextState = deriveWagerState(
-      state.config,
-      state.mathConfig,
-      nextWagerSelection(state.wager, {
-        denomination: maxWager.denomination,
-        creditsPerSpin: maxWager.creditsPerSpin
-      })
+    set(
+      deriveWagerState(
+        state.config,
+        state.mathConfig,
+        nextWagerSelection(state.wager, {
+          denomination: maxWager.denomination,
+          creditsPerSpin: maxWager.creditsPerSpin
+        })
+      )
     );
-    set(nextState);
   },
 
   dismissBonus: () => {
@@ -610,20 +576,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   consumeServerEvent: (event) => {
     if (event.type === "runtime.connected" || event.type === "connected") {
-      const runtimeState = buildRuntimeDerivedState("connected");
-      set({ eventStreamState: "connected", ...runtimeState });
+      set({ eventStreamState: "connected", ...buildRuntimeDerivedState("connected") });
       return;
     }
 
     if (event.type === "runtime.disconnected") {
-      const runtimeState = buildRuntimeDerivedState("disconnected");
-      set({ eventStreamState: "disconnected", ...runtimeState });
+      set({ eventStreamState: "disconnected", ...buildRuntimeDerivedState("disconnected") });
       return;
     }
 
     if (event.type === "runtime.unavailable") {
-      const runtimeState = buildRuntimeDerivedState("unavailable");
-      set({ eventStreamState: "unavailable", ...runtimeState });
+      set({ eventStreamState: "unavailable", ...buildRuntimeDerivedState("unavailable") });
       return;
     }
 
@@ -633,28 +596,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     if (event.type === "jackpot" || event.type === "jackpot.hit") {
       const payload = event.payload as { tier?: JackpotTier; amount?: number };
-      const tier = payload.tier;
-      const amount = payload.amount;
-
-      if (!tier || typeof amount !== "number") {
+      if (!payload.tier || typeof payload.amount !== "number") {
         return;
       }
 
       set({
         jackpotLadder: {
           ...get().jackpotLadder,
-          [tier]: amount
-        }
-      });
-      return;
-    }
-
-    if (event.type === "achievement") {
-      const progression = get().progression;
-      set({
-        progression: {
-          ...progression,
-          relicShards: progression.relicShards + 1
+          [payload.tier]: payload.amount
         }
       });
       return;

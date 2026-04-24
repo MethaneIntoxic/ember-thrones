@@ -1,7 +1,7 @@
 import type {
   BaseGameMathConfig,
-  EmberLockStatus,
-  FreeQuestStatus,
+  FreeGamesStatus,
+  HoldAndSpinStatus,
   JackpotTier,
   WagerProfile
 } from "../net/apiClient";
@@ -11,8 +11,8 @@ import { getBonusTheme } from "./bonusThemes";
 
 export interface BonusPanelsProps {
   jackpotLadder: Record<JackpotTier, number>;
-  emberLock: EmberLockStatus;
-  freeQuest: FreeQuestStatus;
+  holdAndSpin: HoldAndSpinStatus;
+  freeGames: FreeGamesStatus;
   activeBonus: ActiveBonusPresentation | null;
   bonusSessionCount: number;
   runtimeCapabilities: RuntimeCapabilities;
@@ -25,7 +25,7 @@ export interface BonusPanelsProps {
   wager: WagerProfile;
 }
 
-const JACKPOT_ORDER: JackpotTier[] = ["ember", "relic", "mythic", "throne"];
+const JACKPOT_ORDER: JackpotTier[] = ["mini", "minor", "major", "grand"];
 
 function describeEventState(
   runtimeCapabilities: RuntimeCapabilities,
@@ -78,8 +78,8 @@ function transportLabel(transport: ActiveBonusPresentation["transport"]): string
 
 export const BonusPanels = ({
   jackpotLadder,
-  emberLock,
-  freeQuest,
+  holdAndSpin,
+  freeGames,
   activeBonus,
   bonusSessionCount,
   runtimeCapabilities,
@@ -93,11 +93,11 @@ export const BonusPanels = ({
 }: BonusPanelsProps): JSX.Element => {
   const paytableRows = [
     ["5 DRAGON", `${(wager.denomination * 500).toLocaleString()} coins`],
-    ["5 CROWN", `${(wager.denomination * 250).toLocaleString()} coins`],
-    ["3 SCATTER", "Free-spin pressure"],
-    ["6 ORBS", "Collector lock starts"],
-    ["Wheel Trigger", "Scatter + dragon cadence"],
-    ["Relic Trigger", "Chest-heavy bonus route"]
+    ["5 INGOT", `${(wager.denomination * 250).toLocaleString()} coins`],
+    ["3 / 4 / 5 SCATTERS", "10 / 12 / 14 free games"],
+    ["6+ ORBS", "Hold & Spin with 3 respins"],
+    ["FULL 15-SPOT BOARD", "Grand on qualifying wager"],
+    ["MAX BET", wager.qualifiesForProgressive ? "Grand eligible" : "Grand locked"]
   ] as const;
   const featureTheme = activeBonus ? getBonusTheme(activeBonus.type) : null;
 
@@ -113,8 +113,8 @@ export const BonusPanels = ({
         </header>
 
         <p className="feature-copy">
-          Presentation targets a fixed-geometry Dragon Link cabinet: denomination sets coin value,
-          credits-per-spin sets wager size, and features stay tied to reel outcomes instead of board expansion.
+          This cabinet now follows a real link-machine loop: denomination sets coin value,
+          credits-per-spin sets wager size, and the main features come directly from orb and scatter reel outcomes.
         </p>
 
         <div className="feature-metrics">
@@ -178,7 +178,9 @@ export const BonusPanels = ({
 
         {activeBonus ? (
           <>
-            <p className="feature-copy">{activeBonus.featureSession.summaryLabel}</p>
+            <p className="feature-copy">
+              {featureTheme?.panelCopy ?? activeBonus.featureSession.summaryLabel}
+            </p>
 
             <div className="feature-metrics">
               {activeBonus.featureSession.metrics.slice(0, 4).map((metric) => (
@@ -200,8 +202,8 @@ export const BonusPanels = ({
         ) : (
           <>
             <p className="feature-copy">
-              No feature is currently open. The side rail now stays focused on the cabinet playbook,
-              progressive qualification, and the most recent feature-session inventory.
+              No feature is currently open. The side rail stays focused on jackpot qualification,
+              trigger rules, and the most recent feature sessions rather than mini-game detours.
             </p>
 
             <div className="feature-metrics">
@@ -210,12 +212,20 @@ export const BonusPanels = ({
                 <strong>{bonusSessionCount.toLocaleString()}</strong>
               </p>
               <p className="metric-row">
-                <span>Collector State</span>
-                <strong>{emberLock.active ? `${emberLock.lockedCells} locked / ${emberLock.respinsRemaining} left` : "Idle"}</strong>
+                <span>Hold &amp; Spin</span>
+                <strong>
+                  {holdAndSpin.active
+                    ? `${holdAndSpin.lockedCount} locked / ${holdAndSpin.respinsRemaining} left`
+                    : "Standby"}
+                </strong>
               </p>
               <p className="metric-row">
-                <span>Free Spins</span>
-                <strong>{freeQuest.active ? `${freeQuest.spinsRemaining} remaining` : "Standby"}</strong>
+                <span>Free Games</span>
+                <strong>
+                  {freeGames.active
+                    ? `${freeGames.gamesRemaining} left / ${freeGames.modifierId.replace(/_/g, " ")}`
+                    : "Standby"}
+                </strong>
               </p>
             </div>
           </>

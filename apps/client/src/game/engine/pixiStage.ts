@@ -136,7 +136,7 @@ export class PixiStage {
 
     this.clearFxLayer();
 
-    if (type === "EMBER_RESPIN") {
+    if (type === "HOLD_AND_SPIN") {
       await this.effects.parallel([
         () => this.flashScreen(0xff8b4f, 0.34, 320),
         () => this.ringPulse(0xff8b4f, 60, 310, 500, 7),
@@ -148,26 +148,17 @@ export class PixiStage {
       return;
     }
 
-    if (type === "WHEEL_ASCENSION") {
+    if (type === "FREE_GAMES") {
       await this.effects.parallel([
         () => this.flashScreen(0x72b4ff, 0.32, 340),
         () => this.ringPulse(0x72b4ff, 68, 340, 540, 6),
         () => this.orbitBurst(14, 0x8fd0ff, 620),
-        () => this.particleBurst(36, 0x8fd0ff, 560),
+        () => this.particleBurst(36, 0xffd78f, 560),
         () => this.effects.lift(this.reelController.container, 12, 260),
         () => this.effects.pulse(this.reelController.container, 1.05, 300)
       ]);
       return;
     }
-
-    await this.effects.parallel([
-      () => this.flashScreen(0x6fe1cf, 0.33, 340),
-      () => this.ringPulse(0x6fe1cf, 64, 300, 520, 6),
-      () => this.vaultBands(6, 0x82eed8, 560),
-      () => this.shardBurst(30, 0x6fe1cf, 500, 0.72),
-      () => this.effects.shake2D(this.reelController.container, 10, 5, 260),
-      () => this.effects.pulse(this.reelController.container, 1.04, 260)
-    ]);
   }
 
   public resize(width: number, height: number): void {

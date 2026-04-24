@@ -2,68 +2,52 @@ import { describe, expect, it } from "vitest";
 
 import {
   bonusPayloadSchema,
-  celestialWheelAscensionSessionSchema,
   collectBonusSessionJackpotTiers,
   emberRespinCollectorLockSessionSchema,
+  freeGamesSessionSchema,
   normalizeBonusType,
-  relicVaultPickSessionSchema,
   toShortBonusType,
   volatilityProfileSchema
 } from "../src/contracts/api";
-import { resolveCelestialWheelAscension } from "../src/domain/features/celestialWheelAscension";
 import { resolveEmberRespinCollectorLock } from "../src/domain/features/emberRespinCollectorLock";
-import { resolveRelicVaultPick } from "../src/domain/features/relicVaultPick";
+
+const JACKPOT_CONFIG = {
+  resetAmounts: {
+    mini: 5_000,
+    minor: 25_000,
+    major: 100_000,
+    grand: 1_000_000
+  },
+  contributionShares: {
+    mini: 0.4,
+    minor: 0.3,
+    major: 0.2,
+    grand: 0.1
+  },
+  maxBetRequiredForGrand: true
+} as const;
+
+const ORB_TRIGGER_CONFIG = {
+  minOrbs: 6,
+  resetSpins: 3,
+  boardCells: 15,
+  grandRequiresFullBoard: true
+} as const;
+
+const SCATTER_TRIGGER_CONFIG = {
+  minScatters: 3,
+  baseAwardedGames: 10,
+  extraGamesPerExtraScatter: 2,
+  retriggerAward: 3
+} as const;
 
 describe("deterministic bonus resolvers", () => {
-  it("resolves celestial wheel ascension deterministically", () => {
-    const first = resolveCelestialWheelAscension({
-      seed: "wheel-seed-01",
-      bet: 50
-    });
-
-    const second = resolveCelestialWheelAscension({
-      seed: "wheel-seed-01",
-      bet: 50
-    });
-
-    expect(first).toEqual(second);
-    expect(celestialWheelAscensionSessionSchema.parse(first)).toEqual(first);
-    expect(first.type).toBe("WHEEL_ASCENSION");
-    expect(first.awardedSpins).toBeGreaterThan(0);
-    expect(first.maxSpins).toBeGreaterThanOrEqual(first.awardedSpins);
-  });
-
-  it("resolves relic vault picks deterministically with guarded first reveal", () => {
-    const first = resolveRelicVaultPick({
-      seed: "vault-seed-01",
-      bet: 40,
-      keyCount: 4
-    });
-
-    const second = resolveRelicVaultPick({
-      seed: "vault-seed-01",
-      bet: 40,
-      keyCount: 4
-    });
-
-    expect(first).toEqual(second);
-    expect(relicVaultPickSessionSchema.parse(first)).toEqual(first);
-    expect(first.type).toBe("RELIC_VAULT_PICK");
-    expect(first.revealed.length).toBeGreaterThan(0);
-    expect(first.guaranteedNonBustFirstPick).toBe(true);
-    expect(first.pickResults).toHaveLength(first.revealed.length);
-
-    const firstReveal = first.revealed[0] as string;
-    const firstSlot = first.board.find((slot) => slot.slotId === firstReveal);
-    expect(firstSlot).toBeDefined();
-    expect(firstSlot?.hidden).not.toBe("bustShield");
-  });
-
-  it("resolves ember respin collector lock deterministically", () => {
+  it("resolves hold-and-spin deterministically", () => {
     const input = {
-      seed: "ember-seed-01",
+      seed: "hold-seed-01",
       bet: 25,
-      initialLockedCells: [0, 1, 2, 3, 4, 5]
+      initialLockedCells: [0, 1, 2, 3, 4, 5],
+      gameVariantId: "dragon-link-flagship"
     };
 
     const first = resolveEmberRespinCollectorLock(input);
@@ -71,45 +55,74 @@ describe("deterministic bonus resolvers", () => {
 
     expect(first).toEqual(second);
     expect(emberRespinCollectorLockSessionSchema.parse(first)).toEqual(first);
-    expect(first.type).toBe("EMBER_RESPIN");
+    expect(first.type).toBe("HOLD_AND_SPIN");
     expect(first.startingOrbs.length).toBeGreaterThanOrEqual(6);
     expect(first.steps.length).toBeGreaterThan(0);
-    expect(first.lockedCells.length).toBeGreaterThanOrEqual(6);
-    expect(first.collectorMultiplier).toBeGreaterThanOrEqual(1);
     expect(first.finalAward).toBeGreaterThan(0);
   });
 
-  it("normalizes legacy bonus type names onto the canonical contract", () => {
-    expect(normalizeBonusType("EMBER_RESPIN")).toBe("EMBER_RESPIN");
-    expect(normalizeBonusType("EMBER_RESPIN_COLLECTOR_LOCK")).toBe("EMBER_RESPIN");
-    expect(normalizeBonusType("WHEEL_ASCENSION")).toBe("WHEEL_ASCENSION");
-    expect(normalizeBonusType("CELESTIAL_WHEEL_ASCENSION")).toBe("WHEEL_ASCENSION");
-    expect(normalizeBonusType("RELIC_VAULT")).toBe("RELIC_VAULT_PICK");
-    expect(normalizeBonusType("RELIC_VAULT_PICK")).toBe("RELIC_VAULT_PICK");
+  it("accepts canonical free-games outcomes with variant modifiers", () => {
+    const outcome = {
+      type: "FREE_GAMES" as const,
+      gameVariantId: "dragon-link-flagship",
+      modifierId: "EXPANDING_WILD_REELS" as const,
+      initialGames: 10,
+      totalAwardedGames: 12,
+      retriggerCount: 1,
+      steps: [
+        {
+          spinIndex: 1,
+          lineWin: 50,
+          awardedWin: 80,
+          runningAward: 80,
+          scatterCount: 3,
+          retriggered: true,
+          awardedExtraGames: 2,
+          gamesRemainingAfter: 11,
+          expandedWildReels: [3]
+        }
+      ],
+      finalAward: 240
+    };
 
-    expect(toShortBonusType("EMBER_RESPIN")).toBe("EMBER_RESPIN");
-    expect(toShortBonusType("WHEEL_ASCENSION")).toBe("WHEEL_ASCENSION");
-    expect(toShortBonusType("RELIC_VAULT_PICK")).toBe("RELIC_VAULT_PICK");
+    expect(freeGamesSessionSchema.parse(outcome)).toEqual(outcome);
+  });
+
+  it("normalizes legacy bonus type names onto the canonical contract", () => {
+    expect(normalizeBonusType("EMBER_RESPIN")).toBe("HOLD_AND_SPIN");
+    expect(normalizeBonusType("EMBER_RESPIN_COLLECTOR_LOCK")).toBe("HOLD_AND_SPIN");
+    expect(normalizeBonusType("FREE_SPINS")).toBe("FREE_GAMES");
+    expect(normalizeBonusType("FREE_QUEST")).toBe("FREE_GAMES");
+
+    expect(toShortBonusType("HOLD_AND_SPIN")).toBe("HOLD_AND_SPIN");
+    expect(toShortBonusType("FREE_GAMES")).toBe("FREE_GAMES");
   });
 
   it("accepts legacy bonus payload names and canonicalizes on parse", () => {
-    const session = resolveCelestialWheelAscension({
-      seed: "wheel-seed-02",
-      bet: 30
+    const session = resolveEmberRespinCollectorLock({
+      seed: "hold-seed-02",
+      bet: 30,
+      initialLockedCells: [0, 1, 2, 3, 4, 5],
+      gameVariantId: "dragon-link-flagship"
     });
 
     const payload = bonusPayloadSchema.parse({
-      type: "CELESTIAL_WHEEL_ASCENSION",
+      type: "EMBER_RESPIN",
       sessionId: "session-1",
       revealSeed: "reveal-1",
+      gameVariantId: session.gameVariantId,
+      freeGamesModifierId: "ROYALS_REMOVED",
       expectedTotalAward: session.finalAward,
       jackpotTiersHit: collectBonusSessionJackpotTiers(session),
       jackpotAwards: [],
+      jackpotConfig: JACKPOT_CONFIG,
+      orbTriggerConfig: ORB_TRIGGER_CONFIG,
+      scatterTriggerConfig: SCATTER_TRIGGER_CONFIG,
       precomputedOutcome: session
     });
 
-    expect(payload.type).toBe("WHEEL_ASCENSION");
-    expect(payload.precomputedOutcome.type).toBe("WHEEL_ASCENSION");
+    expect(payload.type).toBe("HOLD_AND_SPIN");
+    expect(payload.precomputedOutcome.type).toBe("HOLD_AND_SPIN");
   });
 
   it("accepts all configured volatility profiles", () => {

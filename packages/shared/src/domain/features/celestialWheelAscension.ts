@@ -39,10 +39,10 @@ const BASE_WEDGES: readonly WheelWedgeTemplate[] = [
   { kind: "multiplier", value: 2 },
   { kind: "respin", value: 1 },
   { kind: "respin", value: 2 },
-  { kind: "jackpot", value: "ember" },
-  { kind: "jackpot", value: "relic" },
-  { kind: "jackpot", value: "mythic" },
-  { kind: "jackpot", value: "throne" }
+  { kind: "jackpot", value: "mini" },
+  { kind: "jackpot", value: "minor" },
+  { kind: "jackpot", value: "major" },
+  { kind: "jackpot", value: "grand" }
 ];
 
 function roundCoins(value: number): number {
@@ -119,7 +119,7 @@ export function resolveCelestialWheelAscension(
       spinsRemaining += Math.max(0, Math.min(extraSpins, remainingCap));
       resolvedAward = roundCoins(input.bet * 0.25);
     } else {
-      const jackpotTier = typeof wedge.value === "string" ? (wedge.value as JackpotTier) : "ember";
+      const jackpotTier = typeof wedge.value === "string" ? (wedge.value as JackpotTier) : "mini";
       jackpotTierHits.push(jackpotTier);
       resolvedAward = 0;
     }

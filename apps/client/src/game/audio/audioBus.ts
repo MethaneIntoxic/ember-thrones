@@ -288,8 +288,8 @@ const JACKPOT_HIT_WAV = createClipWav({
   ]
 });
 
-const FEATURE_ACCENT_WAVS: Record<"ember-lock" | "free-quest" | "wheel-ascension" | "relic-vault", string> = {
-  "ember-lock": createClipWav({
+const FEATURE_ACCENT_WAVS: Record<"hold-and-spin" | "free-games", string> = {
+  "hold-and-spin": createClipWav({
     durationMs: 320,
     masterGain: 0.78,
     layers: [
@@ -316,7 +316,7 @@ const FEATURE_ACCENT_WAVS: Record<"ember-lock" | "free-quest" | "wheel-ascension
       }
     ]
   }),
-  "free-quest": createClipWav({
+  "free-games": createClipWav({
     durationMs: 300,
     masterGain: 0.76,
     layers: [
@@ -343,65 +343,11 @@ const FEATURE_ACCENT_WAVS: Record<"ember-lock" | "free-quest" | "wheel-ascension
         tremoloDepth: 0.08
       }
     ]
-  }),
-  "wheel-ascension": createClipWav({
-    durationMs: 320,
-    masterGain: 0.78,
-    layers: [
-      {
-        startMs: 0,
-        durationMs: 200,
-        waveform: "sine",
-        frequencyStart: 440,
-        frequencyEnd: 660,
-        attackMs: 10,
-        releaseMs: 90,
-        volume: 0.24
-      },
-      {
-        startMs: 52,
-        durationMs: 220,
-        waveform: "triangle",
-        frequencyStart: 660,
-        frequencyEnd: 784,
-        attackMs: 10,
-        releaseMs: 110,
-        volume: 0.14
-      }
-    ]
-  }),
-  "relic-vault": createClipWav({
-    durationMs: 340,
-    masterGain: 0.78,
-    layers: [
-      {
-        startMs: 0,
-        durationMs: 190,
-        waveform: "triangle",
-        frequencyStart: 196,
-        frequencyEnd: 262,
-        attackMs: 10,
-        releaseMs: 90,
-        volume: 0.24
-      },
-      {
-        startMs: 66,
-        durationMs: 220,
-        waveform: "sine",
-        frequencyStart: 330,
-        frequencyEnd: 392,
-        attackMs: 10,
-        releaseMs: 120,
-        volume: 0.18,
-        tremoloHz: 5,
-        tremoloDepth: 0.08
-      }
-    ]
   })
 };
 
 const BONUS_ENTRY_WAVS: Record<BonusType, string> = {
-  EMBER_RESPIN: createClipWav({
+  HOLD_AND_SPIN: createClipWav({
     durationMs: 540,
     masterGain: 0.88,
     layers: [
@@ -438,7 +384,7 @@ const BONUS_ENTRY_WAVS: Record<BonusType, string> = {
       }
     ]
   }),
-  WHEEL_ASCENSION: createClipWav({
+  FREE_GAMES: createClipWav({
     durationMs: 620,
     masterGain: 0.88,
     layers: [
@@ -473,44 +419,6 @@ const BONUS_ENTRY_WAVS: Record<BonusType, string> = {
         volume: 0.12,
         tremoloHz: 6.2,
         tremoloDepth: 0.08
-      }
-    ]
-  }),
-  RELIC_VAULT_PICK: createClipWav({
-    durationMs: 600,
-    masterGain: 0.88,
-    layers: [
-      {
-        startMs: 0,
-        durationMs: 300,
-        waveform: "triangle",
-        frequencyStart: 146,
-        frequencyEnd: 220,
-        attackMs: 12,
-        releaseMs: 120,
-        volume: 0.24
-      },
-      {
-        startMs: 82,
-        durationMs: 320,
-        waveform: "sine",
-        frequencyStart: 220,
-        frequencyEnd: 330,
-        attackMs: 12,
-        releaseMs: 150,
-        volume: 0.18
-      },
-      {
-        startMs: 182,
-        durationMs: 280,
-        waveform: "saw",
-        frequencyStart: 330,
-        frequencyEnd: 588,
-        attackMs: 8,
-        releaseMs: 180,
-        volume: 0.1,
-        tremoloHz: 4.8,
-        tremoloDepth: 0.1
       }
     ]
   })
@@ -647,20 +555,14 @@ export class AudioBus {
 
   private readonly jackpotSound = createHowl(JACKPOT_HIT_WAV, 0.72);
 
-  private readonly featureSounds: Record<
-    "ember-lock" | "free-quest" | "wheel-ascension" | "relic-vault",
-    Howl
-  > = {
-    "ember-lock": createHowl(FEATURE_ACCENT_WAVS["ember-lock"], 0.46),
-    "free-quest": createHowl(FEATURE_ACCENT_WAVS["free-quest"], 0.48),
-    "wheel-ascension": createHowl(FEATURE_ACCENT_WAVS["wheel-ascension"], 0.48),
-    "relic-vault": createHowl(FEATURE_ACCENT_WAVS["relic-vault"], 0.48)
+  private readonly featureSounds: Record<"hold-and-spin" | "free-games", Howl> = {
+    "hold-and-spin": createHowl(FEATURE_ACCENT_WAVS["hold-and-spin"], 0.46),
+    "free-games": createHowl(FEATURE_ACCENT_WAVS["free-games"], 0.48)
   };
 
   private readonly bonusEntrySounds: Record<BonusType, Howl> = {
-    EMBER_RESPIN: createHowl(BONUS_ENTRY_WAVS.EMBER_RESPIN, 0.64),
-    WHEEL_ASCENSION: createHowl(BONUS_ENTRY_WAVS.WHEEL_ASCENSION, 0.62),
-    RELIC_VAULT_PICK: createHowl(BONUS_ENTRY_WAVS.RELIC_VAULT_PICK, 0.62)
+    HOLD_AND_SPIN: createHowl(BONUS_ENTRY_WAVS.HOLD_AND_SPIN, 0.64),
+    FREE_GAMES: createHowl(BONUS_ENTRY_WAVS.FREE_GAMES, 0.62)
   };
 
   private readonly ambientLoops: Record<TensionState, Howl> = {
@@ -761,27 +663,15 @@ export class AudioBus {
     this.winSound.play();
   }
 
-  public playFeature(
-    name: "ember-lock" | "free-quest" | "wheel-ascension" | "relic-vault"
-  ): void {
+  public playFeature(name: "hold-and-spin" | "free-games"): void {
     if (!this.unlocked || this.muted) {
       return;
     }
 
     this.featureSounds[name].play();
 
-    if (name === "free-quest") {
-      this.setTensionState("bonus", 980);
-      return;
-    }
-
-    if (name === "ember-lock") {
+    if (name === "hold-and-spin") {
       this.setTensionState("bonus", 1200);
-      return;
-    }
-
-    if (name === "wheel-ascension") {
-      this.setTensionState("bonus", 1400);
       return;
     }
 
@@ -795,16 +685,14 @@ export class AudioBus {
 
     const bonusSound = this.bonusEntrySounds[type];
 
-    if (type === "EMBER_RESPIN") {
+    if (type === "HOLD_AND_SPIN") {
       bonusSound.rate(0.94);
-    } else if (type === "WHEEL_ASCENSION") {
-      bonusSound.rate(1.02);
     } else {
-      bonusSound.rate(0.98);
+      bonusSound.rate(1.02);
     }
 
     bonusSound.play();
-    this.setTensionState("bonus", type === "WHEEL_ASCENSION" ? 2600 : 2400);
+    this.setTensionState("bonus", type === "FREE_GAMES" ? 2600 : 2400);
   }
 
   private ensureAmbientLoopsStarted(): void {

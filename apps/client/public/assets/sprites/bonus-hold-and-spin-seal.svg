@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Hold and Spin crest">
+  <defs>
+    <linearGradient id="hs-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#311323" />
+      <stop offset="55%" stop-color="#611d18" />
+      <stop offset="100%" stop-color="#f08a2b" />
+    </linearGradient>
+    <linearGradient id="hs-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe2a3" />
+      <stop offset="100%" stop-color="#ffb056" />
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="36" fill="url(#hs-bg)" />
+  <circle cx="80" cy="80" r="52" fill="none" stroke="url(#hs-ring)" stroke-width="10" />
+  <circle cx="80" cy="80" r="28" fill="#2a0d12" stroke="#ffd991" stroke-width="3" />
+  <circle cx="80" cy="80" r="14" fill="#ffcc68" />
+  <path d="M80 24l8 18 19 4-14 13 4 19-17-10-17 10 4-19-14-13 19-4 8-18z" fill="#fff3c4" fill-opacity=".72" />
+  <path d="M52 112c11-15 20-22 28-22s17 7 28 22" fill="none" stroke="#ffe0ab" stroke-width="8" stroke-linecap="round" />
+</svg>

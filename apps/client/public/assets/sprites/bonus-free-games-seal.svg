@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Free Games crest">
+  <defs>
+    <linearGradient id="fg-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#132540" />
+      <stop offset="55%" stop-color="#174e78" />
+      <stop offset="100%" stop-color="#67b7ff" />
+    </linearGradient>
+    <linearGradient id="fg-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e9f8ff" />
+      <stop offset="100%" stop-color="#ffd891" />
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="36" fill="url(#fg-bg)" />
+  <circle cx="80" cy="80" r="52" fill="none" stroke="url(#fg-ring)" stroke-width="10" />
+  <path d="M80 34c12 16 22 28 30 36-8 8-18 20-30 36-12-16-22-28-30-36 8-8 18-20 30-36z" fill="#d8efff" fill-opacity=".82" />
+  <circle cx="80" cy="80" r="18" fill="#ffe7a5" />
+  <path d="M38 106c15-8 29-12 42-12s27 4 42 12" fill="none" stroke="#fff1c6" stroke-width="8" stroke-linecap="round" />
+  <circle cx="54" cy="52" r="8" fill="#fff6da" />
+  <circle cx="106" cy="52" r="8" fill="#fff6da" />
+</svg>
